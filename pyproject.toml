@@ -1,0 +1,31 @@
+[project]
+name = "hippocampai-mcp-server"
+version = "1.0.0"
+description = "Feature-complete MCP server for HippocampAI memory management with local Ollama models"
+authors = [{name = "Your Name"}]
+requires-python = ">=3.10"
+dependencies = [
+    "hippocampai>=0.5.0",
+    "mcp>=1.2.0",
+    "qdrant-client>=1.7.0",
+    "redis>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+all = [
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "groq>=0.4.0",
+]
+
+[project.scripts]
+hippocampai-mcp = "hippocampai_mcp_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
