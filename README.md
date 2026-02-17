@@ -84,10 +84,9 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install hippocampai mcp qdrant-client redis
+pip install "hippocampai>=0.5,<0.6" mcp qdrant-client redis
 
-# Copy the server file (hippocampai_mcp_server.py)
-# and configuration (.env)
+# This server uses HippocampAI v0.5.x APIs.
 ```
 
 ### Configure Environment
@@ -105,10 +104,25 @@ REDIS_URL=redis://localhost:6379
 
 ```bash
 # Run directly
-python hippocampai_mcp_server.py
+python -m hippocampai_mcp.server
 
 # Or with uv (recommended)
-uv run hippocampai_mcp_server.py
+uv run python -m hippocampai_mcp.server
+```
+
+The `memory://health` resource now reports dependency readiness for Ollama, Qdrant, and Redis.
+
+### Quick Start (Windows + Codex)
+
+```bash
+# 1) Create environment file
+copy .env.example .env
+
+# 2) Run focused validation
+python -m pytest tests/integration/test_mcp_tool_flows.py -v
+
+# 3) Start the server
+python -m hippocampai_mcp.server
 ```
 
 ## Integration with OpenAI Codex
@@ -122,7 +136,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "hippocampai": {
       "command": "python",
-      "args": ["/absolute/path/to/hippocampai_mcp_server.py"],
+      "args": ["-m", "hippocampai_mcp.server"],
       "env": {
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "qwen2.5:7b-instruct",
@@ -137,6 +151,20 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ### Configure for Other MCP Clients
 
 For VS Code Codex, Cursor, or other MCP-compatible tools, use similar configuration pointing to the server script.
+
+For additional Windows stdio variants (`uv`, full-path `venv` Python), see `docs/codex-config-examples.md`.
+
+### Scoped Tool Naming Conventions
+
+- `user_id`: stable developer identity (example: `laure`, `alice@company.com`)
+- `project_id`: stable workspace/repo identity (example: `hippocampai-mcp`)
+- `agent_id`: stable agent identity (example: `codex-main`, `codex-debugger`)
+
+### Migration from Legacy Tool Names
+
+- `remember` -> `remember_project_memory`, `remember_agent_memory`, `remember_user_preference`
+- `recall` -> `recall_project_context`, `recall_agent_context`, `recall_user_preferences`
+- Legacy tools remain available for backward compatibility, but scoped tools are recommended for deterministic isolation.
 
 ## Usage Examples
 
@@ -249,7 +277,11 @@ Recurrence: weekly
 tail -f ~/Library/Logs/Claude/mcp-server-hippocampai.log
 
 # Test server directly
-python hippocampai_mcp_server.py
+python -m hippocampai_mcp.server
+
+# Confirm dependency readiness through the MCP health resource
+# (returns JSON with per-dependency status)
+# resource: memory://health
 ```
 
 ### Ollama not responding

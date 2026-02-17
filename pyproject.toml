@@ -5,7 +5,7 @@ description = "Feature-complete MCP server for HippocampAI memory management wit
 authors = [{name = "Your Name"}]
 requires-python = ">=3.10"
 dependencies = [
-    "hippocampai>=0.5.0",
+    "hippocampai>=0.5,<0.6",
     "mcp>=1.2.0",
     "qdrant-client>=1.7.0",
     "redis>=5.0.0",
@@ -24,7 +24,7 @@ all = [
 ]
 
 [project.scripts]
-hippocampai-mcp = "hippocampai_mcp_server:main"
+hippocampai-mcp = "hippocampai_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
