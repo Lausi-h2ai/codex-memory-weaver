@@ -17,8 +17,7 @@ from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 from hippocampai import MemoryClient
-from hippocampai.adapters import OllamaLLM
-from hippocampai.types import TimeRange
+from hippocampai import TimeRange
 from hippocampai_mcp.domain.models import MemoryScope
 from hippocampai_mcp.storage import HippocampAIAdapter, MemoryStore
 from hippocampai_mcp.services import AccessControlError, MemoryService
@@ -92,32 +91,90 @@ def _check_tcp_dependency(url: str, default_port: int) -> dict[str, Any]:
         return {"status": "error", "host": host, "port": port, "error": str(exc)}
 
 
+def _initialize_runtime_clients() -> None:
+    """Initialize runtime clients if they are not ready."""
+    global memory_client, memory_store, memory_service
+
+    if memory_client is not None and memory_store is not None and memory_service is not None:
+        return
+
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+    # HippocampAI reads Redis/base-url via config env, not MemoryClient kwargs.
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    os.environ.setdefault("REDIS_URL", redis_url)
+    os.environ.setdefault("LLM_BASE_URL", ollama_url)
+    os.environ.setdefault("LLM_MODEL", ollama_model)
+    os.environ.setdefault("LLM_PROVIDER", "ollama")
+
+    logger.info("Initializing HippocampAI runtime clients on demand")
+    memory_client = MemoryClient(
+        qdrant_url=qdrant_url,
+        llm_provider="ollama",
+        llm_model=ollama_model,
+    )
+    memory_store = HippocampAIAdapter(memory_client)
+    memory_service = MemoryService(memory_store)
+
+
+def _require_memory_service(correlation_id: str | None = None) -> MemoryService | dict[str, Any]:
+    """Return memory service or a structured error payload."""
+    global memory_service
+
+    if memory_service is None:
+        try:
+            _initialize_runtime_clients()
+        except Exception as exc:
+            return _error_payload(
+                code="memory_service_uninitialized",
+                message="Memory service not initialized; check MCP startup/lifespan and dependencies",
+                details={"error": str(exc)},
+                correlation_id=correlation_id,
+            )
+
+    if memory_service is None:
+        return _error_payload(
+            code="memory_service_uninitialized",
+            message="Memory service not initialized; check MCP startup/lifespan and dependencies",
+            correlation_id=correlation_id,
+        )
+
+    return memory_service
+
+
+def _require_memory_client(correlation_id: str | None = None) -> MemoryClient | dict[str, Any]:
+    """Return memory client or a structured error payload."""
+    global memory_client
+
+    if memory_client is None:
+        try:
+            _initialize_runtime_clients()
+        except Exception as exc:
+            return _error_payload(
+                code="memory_client_uninitialized",
+                message="Memory client not initialized; check MCP startup/lifespan and dependencies",
+                details={"error": str(exc)},
+                correlation_id=correlation_id,
+            )
+
+    if memory_client is None:
+        return _error_payload(
+            code="memory_client_uninitialized",
+            message="Memory client not initialized; check MCP startup/lifespan and dependencies",
+            correlation_id=correlation_id,
+        )
+
+    return memory_client
+
+
 @asynccontextmanager
 async def lifespan():
     """Initialize and cleanup HippocampAI client."""
     global memory_client, memory_store, memory_service
     
     try:
-        # Load configuration from environment
-        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
-        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-        
-        logger.info(f"Initializing HippocampAI with Ollama at {ollama_url}")
-        logger.info(f"Using model: {ollama_model}")
-        
-        # Initialize memory client with Ollama
-        memory_client = MemoryClient(
-            llm_provider=OllamaLLM(
-                base_url=ollama_url,
-                model=ollama_model
-            ),
-            qdrant_url=qdrant_url,
-            redis_url=redis_url,
-        )
-        memory_store = HippocampAIAdapter(memory_client)
-        memory_service = MemoryService(memory_store)
+        _initialize_runtime_clients()
         
         logger.info("HippocampAI Memory Server initialized successfully")
         yield
@@ -174,8 +231,11 @@ def remember(
     """
     correlation_id = _new_correlation_id()
     emit_tool_log(logger, event="tool_start", tool="remember", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.remember(
+        response = service.remember(
             text=text,
             user_id=user_id,
             project=project,
@@ -245,8 +305,11 @@ def recall(
     """
     correlation_id = _new_correlation_id()
     emit_tool_log(logger, event="tool_start", tool="recall", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.recall(
+        response = service.recall(
             query=query,
             user_id=user_id,
             scope=None,
@@ -306,12 +369,16 @@ def extract_from_conversation(
     Returns:
         List of extracted and stored memories
     """
+    correlation_id = _new_correlation_id()
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
     try:
         metadata = {}
         if project:
             metadata["project"] = project
         
-        memories = memory_client.extract_from_conversation(
+        memories = client.extract_from_conversation(
             conversation=conversation,
             user_id=user_id,
             session_id=session_id,
@@ -372,6 +439,9 @@ def get_memories(
     """
     correlation_id = _new_correlation_id()
     emit_tool_log(logger, event="tool_start", tool="get_memories", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
         scope: MemoryScope | None = None
         if session_id:
@@ -380,7 +450,7 @@ def get_memories(
             scope = MemoryScope.AGENT
         elif project:
             scope = MemoryScope.PROJECT
-        response = memory_service.list_memories(
+        response = service.list_memories(
             user_id=user_id,
             scope=scope,
             project_id=project,
@@ -440,8 +510,11 @@ def update_memory(
     """
     correlation_id = _new_correlation_id()
     emit_tool_log(logger, event="tool_start", tool="update_memory", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.update_memory(
+        response = service.update_memory(
             memory_id=memory_id,
             text=text,
             importance=importance,
@@ -478,7 +551,7 @@ def update_memory(
 def delete_memory(
     memory_id: str,
     user_id: Optional[str] = None,
-) -> dict[str, bool]:
+) -> dict[str, Any]:
     """
     Delete a memory by ID.
     
@@ -491,8 +564,11 @@ def delete_memory(
     """
     correlation_id = _new_correlation_id()
     emit_tool_log(logger, event="tool_start", tool="delete_memory", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.delete_memory(memory_id=memory_id, user_id=user_id)
+        response = service.delete_memory(memory_id=memory_id, user_id=user_id)
         response["message"] = (
             "Memory deleted successfully" if response["success"] else "Memory not found"
         )
@@ -540,10 +616,13 @@ def get_memory_statistics(
     emit_tool_log(
         logger, event="tool_start", tool="get_memory_statistics", correlation_id=correlation_id
     )
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        stats = memory_service.get_memory_statistics(user_id=user_id)
+        stats = service.get_memory_statistics(user_id=user_id)
         if project:
-            project_memories = memory_service.list_memories(
+            project_memories = service.list_memories(
                 user_id=user_id,
                 scope=MemoryScope.PROJECT,
                 project_id=project,
@@ -592,8 +671,11 @@ def remember_project_memory(
     emit_tool_log(
         logger, event="tool_start", tool="remember_project_memory", correlation_id=correlation_id
     )
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.remember_project_memory(
+        response = service.remember_project_memory(
             text=text,
             user_id=user_id,
             project_id=project_id,
@@ -642,8 +724,11 @@ def remember_agent_memory(
     emit_tool_log(
         logger, event="tool_start", tool="remember_agent_memory", correlation_id=correlation_id
     )
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.remember_agent_memory(
+        response = service.remember_agent_memory(
             text=text,
             user_id=user_id,
             project_id=project_id,
@@ -690,8 +775,11 @@ def remember_user_preference(
     emit_tool_log(
         logger, event="tool_start", tool="remember_user_preference", correlation_id=correlation_id
     )
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        response = memory_service.remember_user_preference(
+        response = service.remember_user_preference(
             text=text,
             user_id=user_id,
             memory_type=memory_type,
@@ -707,6 +795,36 @@ def remember_user_preference(
         )
         return response
     except Exception as e:
+        if "metadata" in str(e):
+            client = _require_memory_client(correlation_id=correlation_id)
+            if isinstance(client, dict):
+                return client
+            try:
+                fallback = client.remember(
+                    text=text,
+                    user_id=user_id,
+                    type=memory_type,
+                    importance=importance,
+                    tags=tags,
+                )
+                response = {
+                    "id": _attr(fallback, "id"),
+                    "text": _attr(fallback, "text"),
+                    "type": _attr(fallback, "type"),
+                    "importance": _attr(fallback, "importance"),
+                    "tags": _attr(fallback, "tags") or [],
+                    "created_at": _iso_attr(fallback, "created_at", "createdat"),
+                }
+                emit_tool_log(
+                    logger,
+                    event="tool_success",
+                    tool="remember_user_preference",
+                    correlation_id=correlation_id,
+                    memory_id=response["id"],
+                )
+                return response
+            except Exception as fallback_error:
+                e = fallback_error
         emit_tool_log(
             logger,
             event="tool_error",
@@ -733,8 +851,12 @@ def recall_project_context(
     memory_type: Optional[str] = None,
     tags: Optional[list[str]] = None,
 ) -> dict[str, Any]:
+    correlation_id = _new_correlation_id()
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        return memory_service.recall_project_context(
+        return service.recall_project_context(
             query=query,
             user_id=user_id,
             project_id=project_id,
@@ -748,6 +870,7 @@ def recall_project_context(
             code="recall_project_failed",
             message="Failed to recall project context",
             details={"error": str(e)},
+            correlation_id=correlation_id,
         )
 
 
@@ -762,8 +885,12 @@ def recall_agent_context(
     memory_type: Optional[str] = None,
     tags: Optional[list[str]] = None,
 ) -> dict[str, Any]:
+    correlation_id = _new_correlation_id()
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        return memory_service.recall_agent_context(
+        return service.recall_agent_context(
             query=query,
             user_id=user_id,
             project_id=project_id,
@@ -778,6 +905,7 @@ def recall_agent_context(
             code="recall_agent_failed",
             message="Failed to recall agent context",
             details={"error": str(e)},
+            correlation_id=correlation_id,
         )
 
 
@@ -789,8 +917,12 @@ def recall_user_preferences(
     min_importance: Optional[float] = None,
     tags: Optional[list[str]] = None,
 ) -> dict[str, Any]:
+    correlation_id = _new_correlation_id()
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        return memory_service.recall_user_preferences(
+        return service.recall_user_preferences(
             query=query,
             user_id=user_id,
             k=k,
@@ -802,6 +934,7 @@ def recall_user_preferences(
             code="recall_preferences_failed",
             message="Failed to recall user preferences",
             details={"error": str(e)},
+            correlation_id=correlation_id,
         )
 
 
