@@ -94,4 +94,4 @@ def test_list_uses_scope_tags_for_filter_generation() -> None:
     payload = client.calls["get_memories"]
     assert payload["user_id"] == "u1"
     assert payload["limit"] == 10
-    assert payload["tags"] == ["scope:user_preference"]
+    assert payload["filters"]["tags"] == ["scope:user_preference"]

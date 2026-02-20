@@ -374,15 +374,10 @@ def extract_from_conversation(
     if isinstance(client, dict):
         return client
     try:
-        metadata = {}
-        if project:
-            metadata["project"] = project
-        
         memories = client.extract_from_conversation(
             conversation=conversation,
             user_id=user_id,
             session_id=session_id,
-            metadata=metadata,
         )
         
         return {
@@ -1115,7 +1110,7 @@ def get_agent_memories(
     try:
         memories = memory_client.get_agent_memories(
             agent_id=agent_id,
-            user_id=user_id,
+            requesting_agent_id=user_id,
             limit=limit,
         )
         
@@ -1162,8 +1157,13 @@ def extract_facts(
     try:
         facts = memory_client.extract_facts(
             text=text,
-            confidence_threshold=confidence_threshold,
+            user_id=user_id,
         )
+        if 0 <= confidence_threshold <= 1:
+            facts = [
+                f for f in facts
+                if (getattr(f, "confidence", None) is None or getattr(f, "confidence", 0.0) >= confidence_threshold)
+            ]
         
         return {
             "facts": [

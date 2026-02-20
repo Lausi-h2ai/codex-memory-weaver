@@ -54,13 +54,12 @@ class StrictV05Client:
         }
         return []
 
-    def update_memory(self, *, memory_id, text=None, importance=None, tags=None, user_id=None):
+    def update_memory(self, *, memory_id, text=None, importance=None, tags=None):
         self.last_call["update_memory"] = {
             "memory_id": memory_id,
             "text": text,
             "importance": importance,
             "tags": tags,
-            "user_id": user_id,
         }
         return SimpleNamespace(id=memory_id)
 
@@ -75,23 +74,13 @@ class StrictV05Client:
         self,
         *,
         user_id,
-        type=None,
-        tags=None,
-        session_id=None,
-        agent_id=None,
+        filters=None,
         limit=50,
-        sort_by="created_at",
-        order="desc",
     ):
         self.last_call["get_memories"] = {
             "user_id": user_id,
-            "type": type,
-            "tags": tags,
-            "session_id": session_id,
-            "agent_id": agent_id,
+            "filters": filters,
             "limit": limit,
-            "sort_by": sort_by,
-            "order": order,
         }
         return []
 

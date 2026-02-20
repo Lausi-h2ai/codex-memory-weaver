@@ -134,12 +134,13 @@ class HippocampAIAdapter:
         tags: list[str] | None = None,
         user_id: str | None = None,
     ) -> Any:
+        # user_id is enforced at service layer; HippocampAI v0.5.0 update_memory does not accept it.
+        _ = user_id
         return self._client.update_memory(
             memory_id=memory_id,
             text=text,
             importance=importance,
             tags=tags,
-            user_id=user_id,
         )
 
     def delete(self, *, memory_id: str, user_id: str | None = None) -> bool:
@@ -162,15 +163,20 @@ class HippocampAIAdapter:
         encoded_tags = self._encode_tags(
             scope=scope, project_id=project_id, agent_id=agent_id, tags=tags
         )
+        filters: dict[str, Any] = {}
+        if memory_type is not None:
+            filters["type"] = memory_type
+        if encoded_tags:
+            filters["tags"] = encoded_tags
+        if session_id is not None:
+            filters["session_id"] = session_id
+        if agent_id is not None:
+            filters["agent_id"] = agent_id
+
         return self._client.get_memories(
             user_id=user_id,
-            type=memory_type,
-            tags=encoded_tags or None,
-            session_id=session_id,
-            agent_id=agent_id,
+            filters=filters or None,
             limit=limit,
-            sort_by=sort_by,
-            order=order,
         )
 
     def stats(self, *, user_id: str) -> dict[str, Any]:

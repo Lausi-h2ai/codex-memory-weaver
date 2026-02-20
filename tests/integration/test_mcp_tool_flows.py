@@ -155,6 +155,5 @@ def test_hippocampai_v05_signature_expectations() -> None:
     assert "agent_id" in remember_params
 
     assert "user_id" in get_memories_params
-    assert "type" in get_memories_params
-    assert "session_id" in get_memories_params
-    assert "agent_id" in get_memories_params
+    assert "filters" in get_memories_params
+    assert "limit" in get_memories_params
