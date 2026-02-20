@@ -68,7 +68,7 @@ class HippocampAIAdapter:
         scope: MemoryScope | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
-        return self._client.remember(
+        payload = dict(
             text=text,
             user_id=user_id,
             session_id=session_id,
@@ -77,8 +77,21 @@ class HippocampAIAdapter:
             tags=self._encode_tags(scope=scope, project_id=project_id, agent_id=agent_id, tags=tags),
             agent_id=agent_id,
             ttl_days=ttl_days,
-            metadata=self._encode_metadata(scope=scope, project_id=project_id, agent_id=agent_id, metadata=metadata),
         )
+        encoded_metadata = self._encode_metadata(
+            scope=scope, project_id=project_id, agent_id=agent_id, metadata=metadata
+        )
+        if encoded_metadata:
+            payload["metadata"] = encoded_metadata
+
+        try:
+            return self._client.remember(**payload)
+        except TypeError as exc:
+            # Backward compatibility for HippocampAI clients that do not accept metadata.
+            if "metadata" not in str(exc):
+                raise
+            payload.pop("metadata", None)
+            return self._client.remember(**payload)
 
     def recall(
         self,
