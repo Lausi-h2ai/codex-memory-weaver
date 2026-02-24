@@ -14,6 +14,8 @@ from typing import Any, Optional
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
+from urllib import request as urllib_request
+from urllib import parse as urllib_parse
 
 from mcp.server.fastmcp import FastMCP
 from hippocampai import MemoryClient
@@ -59,6 +61,35 @@ def _iso_attr(obj: Any, *names: str) -> str | None:
     return str(value)
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, set):
+        return [_json_safe(v) for v in sorted(value, key=str)]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "value"):
+        return getattr(value, "value")
+    return str(value)
+
+
+def _as_record_dict(item: Any) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return {str(k): _json_safe(v) for k, v in item.items()}
+    if hasattr(item, "model_dump"):
+        return {str(k): _json_safe(v) for k, v in item.model_dump(mode="json").items()}
+    if hasattr(item, "dict"):
+        return {str(k): _json_safe(v) for k, v in item.dict().items()}
+    raw = getattr(item, "__dict__", {})
+    if isinstance(raw, dict) and raw:
+        return {str(k): _json_safe(v) for k, v in raw.items() if not str(k).startswith("_")}
+    return {"value": _json_safe(item)}
+
+
 def _error_payload(
     *,
     code: str,
@@ -78,6 +109,40 @@ def _error_payload(
 
 def _new_correlation_id() -> str:
     return str(uuid.uuid4())
+
+
+def _procedural_api_request(
+    *,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    correlation_id: str,
+) -> dict[str, Any]:
+    base_url = os.getenv("HIPPOCAMPAI_API_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        return _error_payload(
+            code="not_supported",
+            message="Procedural memory HTTP bridge is not configured; set HIPPOCAMPAI_API_BASE_URL",
+            correlation_id=correlation_id,
+        )
+
+    payload: bytes | None = None
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = urllib_request.Request(
+        url=f"{base_url}{path}",
+        data=payload,
+        headers=headers,
+        method=method,
+    )
+    with urllib_request.urlopen(req, timeout=10) as response:
+        content = response.read().decode("utf-8") if hasattr(response, "read") else ""
+        if not content.strip():
+            return {}
+        return json.loads(content)
 
 
 def _check_tcp_dependency(url: str, default_port: int) -> dict[str, Any]:
@@ -1188,6 +1253,195 @@ def get_feedback_stats(user_id: str) -> dict[str, Any]:
 
 
 # ============================================================================
+# PROCEDURAL MEMORY (HTTP BRIDGE)
+# ============================================================================
+
+@mcp.tool()
+def list_procedural_rules(user_id: str) -> dict[str, Any]:
+    """List active procedural rules for a user via HippocampAI REST API."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="list_procedural_rules", correlation_id=correlation_id)
+    try:
+        query = urllib_parse.urlencode({"user_id": user_id})
+        response = _procedural_api_request(
+            method="GET",
+            path=f"/v1/procedural/rules?{query}",
+            body=None,
+            correlation_id=correlation_id,
+        )
+        if isinstance(response, dict) and response.get("code") == "not_supported":
+            return response
+        emit_tool_log(logger, event="tool_success", tool="list_procedural_rules", correlation_id=correlation_id)
+        return response if isinstance(response, dict) else {"rules": response}
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="list_procedural_rules",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="list_procedural_rules_failed",
+            message="Failed to list procedural rules",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def extract_procedural_rules(user_id: str, interactions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Extract procedural rules from interaction history via HippocampAI REST API."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="extract_procedural_rules", correlation_id=correlation_id)
+    try:
+        response = _procedural_api_request(
+            method="POST",
+            path="/v1/procedural/extract",
+            body={"user_id": user_id, "interactions": interactions},
+            correlation_id=correlation_id,
+        )
+        if isinstance(response, dict) and response.get("code") == "not_supported":
+            return response
+        emit_tool_log(logger, event="tool_success", tool="extract_procedural_rules", correlation_id=correlation_id)
+        return response if isinstance(response, dict) else {"rules": response}
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="extract_procedural_rules",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="extract_procedural_rules_failed",
+            message="Failed to extract procedural rules",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def inject_procedural_rules(user_id: str, prompt: str, max_rules: int = 3) -> dict[str, Any]:
+    """Inject relevant procedural rules into prompt context via HippocampAI REST API."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="inject_procedural_rules", correlation_id=correlation_id)
+    try:
+        response = _procedural_api_request(
+            method="POST",
+            path="/v1/procedural/inject",
+            body={"user_id": user_id, "prompt": prompt, "max_rules": max_rules},
+            correlation_id=correlation_id,
+        )
+        if isinstance(response, dict) and response.get("code") == "not_supported":
+            return response
+        emit_tool_log(logger, event="tool_success", tool="inject_procedural_rules", correlation_id=correlation_id)
+        return response if isinstance(response, dict) else {"result": response}
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="inject_procedural_rules",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="inject_procedural_rules_failed",
+            message="Failed to inject procedural rules",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def update_procedural_rule_feedback(
+    rule_id: str,
+    effectiveness: float,
+    user_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Update procedural rule effectiveness feedback via HippocampAI REST API."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(
+        logger,
+        event="tool_start",
+        tool="update_procedural_rule_feedback",
+        correlation_id=correlation_id,
+    )
+    try:
+        payload: dict[str, Any] = {"effectiveness": effectiveness}
+        if user_id:
+            payload["user_id"] = user_id
+        encoded_rule_id = urllib_parse.quote(rule_id, safe="")
+        response = _procedural_api_request(
+            method="PUT",
+            path=f"/v1/procedural/rules/{encoded_rule_id}/feedback",
+            body=payload,
+            correlation_id=correlation_id,
+        )
+        if isinstance(response, dict) and response.get("code") == "not_supported":
+            return response
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="update_procedural_rule_feedback",
+            correlation_id=correlation_id,
+        )
+        return response if isinstance(response, dict) else {"result": response}
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="update_procedural_rule_feedback",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="update_procedural_rule_feedback_failed",
+            message="Failed to update procedural rule feedback",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def consolidate_procedural_rules(user_id: str) -> dict[str, Any]:
+    """Consolidate redundant procedural rules via HippocampAI REST API."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="consolidate_procedural_rules", correlation_id=correlation_id)
+    try:
+        query = urllib_parse.urlencode({"user_id": user_id})
+        response = _procedural_api_request(
+            method="POST",
+            path=f"/v1/procedural/consolidate?{query}",
+            body=None,
+            correlation_id=correlation_id,
+        )
+        if isinstance(response, dict) and response.get("code") == "not_supported":
+            return response
+        emit_tool_log(logger, event="tool_success", tool="consolidate_procedural_rules", correlation_id=correlation_id)
+        return response if isinstance(response, dict) else {"result": response}
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="consolidate_procedural_rules",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="consolidate_procedural_rules_failed",
+            message="Failed to consolidate procedural rules",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+# ============================================================================
 # SESSION MANAGEMENT
 # ============================================================================
 
@@ -1441,8 +1695,367 @@ def cluster_memories(
 
 
 # ============================================================================
+# CROSS-SESSION INSIGHTS
+# ============================================================================
+
+@mcp.tool()
+def detect_patterns(
+    user_id: str,
+    session_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Detect recurring/sequential/correlational patterns across memories."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="detect_patterns", correlation_id=correlation_id)
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if not hasattr(client, "detect_patterns"):
+            return _error_payload(
+                code="not_supported",
+                message="detect_patterns is not available on this HippocampAI client",
+                correlation_id=correlation_id,
+            )
+        patterns = client.detect_patterns(user_id=user_id, session_ids=session_ids)
+        response = {"count": len(patterns), "patterns": [_as_record_dict(p) for p in patterns]}
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="detect_patterns",
+            correlation_id=correlation_id,
+            result_count=response["count"],
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="detect_patterns",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="detect_patterns_failed",
+            message="Failed to detect patterns",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def track_behavior_changes(
+    user_id: str,
+    comparison_days: int = 30,
+) -> dict[str, Any]:
+    """Track behavior changes between two time periods."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="track_behavior_changes", correlation_id=correlation_id)
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if not hasattr(client, "track_behavior_changes"):
+            return _error_payload(
+                code="not_supported",
+                message="track_behavior_changes is not available on this HippocampAI client",
+                correlation_id=correlation_id,
+            )
+        changes = client.track_behavior_changes(user_id=user_id, comparison_days=comparison_days)
+        response = {"count": len(changes), "changes": [_as_record_dict(c) for c in changes]}
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="track_behavior_changes",
+            correlation_id=correlation_id,
+            result_count=response["count"],
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="track_behavior_changes",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="track_behavior_changes_failed",
+            message="Failed to track behavior changes",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def analyze_preference_drift(
+    user_id: str,
+    category: Optional[str] = None,
+) -> dict[str, Any]:
+    """Analyze how user preferences drift over time."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="analyze_preference_drift", correlation_id=correlation_id)
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if not hasattr(client, "analyze_preference_drift"):
+            return _error_payload(
+                code="not_supported",
+                message="analyze_preference_drift is not available on this HippocampAI client",
+                correlation_id=correlation_id,
+            )
+        drifts = client.analyze_preference_drift(user_id=user_id, category=category)
+        response = {"count": len(drifts), "drifts": [_as_record_dict(d) for d in drifts]}
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="analyze_preference_drift",
+            correlation_id=correlation_id,
+            result_count=response["count"],
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="analyze_preference_drift",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="analyze_preference_drift_failed",
+            message="Failed to analyze preference drift",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def detect_habits(
+    user_id: str,
+    min_occurrences: int = 5,
+) -> dict[str, Any]:
+    """Detect and score user habits."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="detect_habits", correlation_id=correlation_id)
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if not hasattr(client, "detect_habits"):
+            return _error_payload(
+                code="not_supported",
+                message="detect_habits is not available on this HippocampAI client",
+                correlation_id=correlation_id,
+            )
+        habits = client.detect_habits(user_id=user_id, min_occurrences=min_occurrences)
+        response = {"count": len(habits), "habits": [_as_record_dict(h) for h in habits]}
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="detect_habits",
+            correlation_id=correlation_id,
+            result_count=response["count"],
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="detect_habits",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="detect_habits_failed",
+            message="Failed to detect habits",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def analyze_trends(
+    user_id: str,
+    window_days: int = 30,
+) -> dict[str, Any]:
+    """Analyze long-term behavior trends."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="analyze_trends", correlation_id=correlation_id)
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if not hasattr(client, "analyze_trends"):
+            return _error_payload(
+                code="not_supported",
+                message="analyze_trends is not available on this HippocampAI client",
+                correlation_id=correlation_id,
+            )
+        trends = client.analyze_trends(user_id=user_id, window_days=window_days)
+        response = {"count": len(trends), "trends": [_as_record_dict(t) for t in trends]}
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="analyze_trends",
+            correlation_id=correlation_id,
+            result_count=response["count"],
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="analyze_trends",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="analyze_trends_failed",
+            message="Failed to analyze trends",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+# ============================================================================
 # GRAPH & RELATIONSHIPS
 # ============================================================================
+
+@mcp.tool()
+def get_memory_clusters(user_id: str) -> dict[str, Any]:
+    """Retrieve memory clusters from the knowledge graph pipeline."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="get_memory_clusters", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
+    try:
+        response = service.get_memory_clusters(user_id=user_id)
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="get_memory_clusters",
+            correlation_id=correlation_id,
+            result_count=response.get("count", 0),
+        )
+        return response
+    except NotImplementedError:
+        return _error_payload(
+            code="not_supported",
+            message="get_memory_clusters is not available on this HippocampAI client",
+            correlation_id=correlation_id,
+        )
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="get_memory_clusters",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="get_memory_clusters_failed",
+            message="Failed to retrieve memory clusters",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def get_knowledge_subgraph(
+    center_id: str,
+    radius: int = 2,
+    include_types: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Retrieve a graph neighborhood around a center entity or memory."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="get_knowledge_subgraph", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
+    try:
+        response = service.get_knowledge_subgraph(
+            center_id=center_id,
+            radius=radius,
+            include_types=include_types,
+        )
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="get_knowledge_subgraph",
+            correlation_id=correlation_id,
+        )
+        return response
+    except NotImplementedError:
+        return _error_payload(
+            code="not_supported",
+            message="get_knowledge_subgraph is not available on this HippocampAI client",
+            correlation_id=correlation_id,
+        )
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="get_knowledge_subgraph",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="get_knowledge_subgraph_failed",
+            message="Failed to retrieve knowledge subgraph",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def extract_relationships(text: str) -> dict[str, Any]:
+    """Extract relationship candidates from text using backend NLP/LLM pipeline."""
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="extract_relationships", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
+    try:
+        response = service.extract_relationships(text=text)
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="extract_relationships",
+            correlation_id=correlation_id,
+            result_count=response.get("count", 0),
+        )
+        return response
+    except NotImplementedError:
+        return _error_payload(
+            code="not_supported",
+            message="extract_relationships is not available on this HippocampAI client",
+            correlation_id=correlation_id,
+        )
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="extract_relationships",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="extract_relationships_failed",
+            message="Failed to extract relationships from text",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
 
 @mcp.tool()
 def add_relationship(

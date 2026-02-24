@@ -74,6 +74,18 @@ class StubStore:
         self.calls["get_feedback_stats"] = kwargs
         return {"user_id": kwargs["user_id"], "stats": {"relevant": 2}}
 
+    def get_memory_clusters(self, **kwargs):
+        self.calls["get_memory_clusters"] = kwargs
+        return [{"cluster_id": "c1", "memory_ids": ["m1", "m2"]}]
+
+    def get_knowledge_subgraph(self, **kwargs):
+        self.calls["get_knowledge_subgraph"] = kwargs
+        return {"nodes": [{"id": "m1"}], "edges": [{"source": "m1", "target": "m2"}]}
+
+    def extract_relationships(self, **kwargs):
+        self.calls["extract_relationships"] = kwargs
+        return [{"source": "alice", "target": "qdrant", "relation_type": "uses"}]
+
 
 def test_remember_project_memory_scopes_to_project() -> None:
     store = StubStore()
@@ -238,3 +250,19 @@ def test_feedback_methods_passthrough() -> None:
     assert score["memory_id"] == "m1"
     assert stats["user_id"] == "u1"
     assert store.calls["submit_memory_feedback"]["query"] == "auth"
+
+
+def test_graph_extras_methods_passthrough() -> None:
+    store = StubStore()
+    service = MemoryService(store)
+
+    clusters = service.get_memory_clusters(user_id="u1")
+    subgraph = service.get_knowledge_subgraph(center_id="m1", radius=2, include_types=["memory"])
+    extracted = service.extract_relationships(text="Alice uses Qdrant")
+
+    assert clusters["count"] == 1
+    assert clusters["clusters"][0]["cluster_id"] == "c1"
+    assert subgraph["center_id"] == "m1"
+    assert subgraph["subgraph"]["nodes"][0]["id"] == "m1"
+    assert extracted["count"] == 1
+    assert extracted["relationships"][0]["relation_type"] == "uses"

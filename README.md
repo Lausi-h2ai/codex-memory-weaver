@@ -25,8 +25,10 @@ A feature-complete Model Context Protocol (MCP) server that provides persistent 
 - ✅ **extract_facts**: Structured fact extraction from text
 - ✅ **cluster_memories**: Automatic semantic clustering
 - ✅ Pattern detection across memory corpus
+- ✅ **detect_patterns** / **track_behavior_changes** / **analyze_preference_drift** / **detect_habits** / **analyze_trends** (cross-session insights)
 - ✅ **add_relationship**: Link memories in the knowledge graph
 - ✅ **get_related_memories**: Traverse memory relations by depth
+- ✅ **get_memory_clusters** / **get_knowledge_subgraph** / **extract_relationships** (graph extras)
 - ✅ Graph-aware retrieval hint via `recall(..., search_mode="graph_hybrid")`
 
 ### Temporal Features
@@ -46,6 +48,14 @@ A feature-complete Model Context Protocol (MCP) server that provides persistent 
 - Valid `feedback_type` values: `relevant`, `not_relevant`, `partially_relevant`, `outdated`
 - Invalid `feedback_type` returns `validation_error`
 - Backends without feedback APIs return `not_supported` (with `correlation_id`)
+
+### Procedural Memory (HTTP Bridge)
+- ✅ **list_procedural_rules**
+- ✅ **extract_procedural_rules**
+- ✅ **inject_procedural_rules**
+- ✅ **update_procedural_rule_feedback**
+- ✅ **consolidate_procedural_rules**
+- Requires `HIPPOCAMPAI_API_BASE_URL` to be set; otherwise returns `not_supported`
 
 ## Prerequisites
 
@@ -109,6 +119,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
 QDRANT_URL=http://localhost:6333
 REDIS_URL=redis://localhost:6379
+HIPPOCAMPAI_API_BASE_URL=http://localhost:8000
 ```
 
 ### Test the Server

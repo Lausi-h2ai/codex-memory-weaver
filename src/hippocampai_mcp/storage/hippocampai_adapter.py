@@ -362,3 +362,28 @@ class HippocampAIAdapter:
         if not hasattr(self._client, "get_feedback_stats"):
             raise NotImplementedError("get_feedback_stats is not available on this client")
         return self._client.get_feedback_stats(user_id=user_id)
+
+    def get_memory_clusters(self, *, user_id: str) -> list[Any]:
+        if not hasattr(self._client, "get_memory_clusters"):
+            raise NotImplementedError("get_memory_clusters is not available on this client")
+        return self._client.get_memory_clusters(user_id=user_id)
+
+    def get_knowledge_subgraph(
+        self,
+        *,
+        center_id: str,
+        radius: int = 2,
+        include_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if not hasattr(self._client, "get_knowledge_subgraph"):
+            raise NotImplementedError("get_knowledge_subgraph is not available on this client")
+        return self._client.get_knowledge_subgraph(
+            center_id=center_id,
+            radius=radius,
+            include_types=include_types,
+        )
+
+    def extract_relationships(self, *, text: str) -> list[Any]:
+        if not hasattr(self._client, "extract_relationships"):
+            raise NotImplementedError("extract_relationships is not available on this client")
+        return self._client.extract_relationships(text=text)

@@ -342,6 +342,65 @@ class MemoryService:
     def get_feedback_stats(self, *, user_id: str) -> dict[str, Any]:
         return self.store.get_feedback_stats(user_id=user_id)
 
+    def get_memory_clusters(self, *, user_id: str) -> dict[str, Any]:
+        clusters = self.store.get_memory_clusters(user_id=user_id)
+        normalized: list[dict[str, Any]] = []
+        for cluster in clusters:
+            if isinstance(cluster, set):
+                memory_ids = sorted(cluster)
+                normalized.append({"memory_ids": memory_ids, "memory_count": len(memory_ids)})
+                continue
+            if isinstance(cluster, dict):
+                cluster_dict = dict(cluster)
+                if "memory_ids" in cluster_dict and "memory_count" not in cluster_dict:
+                    cluster_dict["memory_count"] = len(cluster_dict["memory_ids"])
+                normalized.append(cluster_dict)
+                continue
+            memories = _attr(cluster, "memories")
+            if memories is not None:
+                memory_ids = [_attr(m, "id") for m in memories]
+                normalized.append(
+                    {
+                        "topic": _attr(cluster, "topic"),
+                        "memory_ids": memory_ids,
+                        "memory_count": len(memory_ids),
+                    }
+                )
+                continue
+            normalized.append({"value": cluster})
+        return {"count": len(normalized), "clusters": normalized}
+
+    def get_knowledge_subgraph(
+        self,
+        *,
+        center_id: str,
+        radius: int = 2,
+        include_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        subgraph = self.store.get_knowledge_subgraph(
+            center_id=center_id,
+            radius=radius,
+            include_types=include_types,
+        )
+        return {"center_id": center_id, "subgraph": subgraph}
+
+    def extract_relationships(self, *, text: str) -> dict[str, Any]:
+        relationships = self.store.extract_relationships(text=text)
+        normalized = []
+        for rel in relationships:
+            if isinstance(rel, dict):
+                normalized.append(rel)
+            else:
+                normalized.append(
+                    {
+                        "source": _attr(rel, "source", "source_id"),
+                        "target": _attr(rel, "target", "target_id"),
+                        "relation_type": _attr(rel, "relation_type", "type"),
+                        "confidence": _attr(rel, "confidence"),
+                    }
+                )
+        return {"count": len(normalized), "relationships": normalized}
+
     def add_relationship(
         self,
         *,

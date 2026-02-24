@@ -104,6 +104,18 @@ class FeedbackClient(DummyClient):
         self.calls["get_feedback_stats"] = kwargs
         return {"user_id": kwargs["user_id"], "stats": {"relevant": 2}}
 
+    def get_memory_clusters(self, **kwargs):
+        self.calls["get_memory_clusters"] = kwargs
+        return [{"cluster_id": "c1", "memory_ids": ["m1", "m2"]}]
+
+    def get_knowledge_subgraph(self, **kwargs):
+        self.calls["get_knowledge_subgraph"] = kwargs
+        return {"nodes": [{"id": "m1"}], "edges": [{"source": "m1", "target": "m2"}]}
+
+    def extract_relationships(self, **kwargs):
+        self.calls["extract_relationships"] = kwargs
+        return [{"source": "alice", "target": "qdrant", "relation_type": "uses"}]
+
 
 def _as_relation_value(value):
     return getattr(value, "value", value)
@@ -325,3 +337,45 @@ def test_feedback_methods_raise_not_supported_when_backend_missing() -> None:
         pass
     else:
         raise AssertionError("expected NotImplementedError for get_feedback_stats")
+
+
+def test_graph_extras_methods_passthrough_to_client() -> None:
+    client = FeedbackClient()
+    adapter = HippocampAIAdapter(client)
+
+    clusters = adapter.get_memory_clusters(user_id="u1")
+    subgraph = adapter.get_knowledge_subgraph(center_id="m1", radius=2, include_types=["memory"])
+    relationships = adapter.extract_relationships(text="Alice uses Qdrant")
+
+    assert clusters[0]["cluster_id"] == "c1"
+    assert client.calls["get_memory_clusters"]["user_id"] == "u1"
+    assert subgraph["nodes"][0]["id"] == "m1"
+    assert client.calls["get_knowledge_subgraph"]["center_id"] == "m1"
+    assert relationships[0]["relation_type"] == "uses"
+    assert client.calls["extract_relationships"]["text"] == "Alice uses Qdrant"
+
+
+def test_graph_extras_methods_raise_not_supported_when_backend_missing() -> None:
+    client = DummyClient()
+    adapter = HippocampAIAdapter(client)
+
+    try:
+        adapter.get_memory_clusters(user_id="u1")
+    except NotImplementedError:
+        pass
+    else:
+        raise AssertionError("expected NotImplementedError for get_memory_clusters")
+
+    try:
+        adapter.get_knowledge_subgraph(center_id="m1", radius=2, include_types=None)
+    except NotImplementedError:
+        pass
+    else:
+        raise AssertionError("expected NotImplementedError for get_knowledge_subgraph")
+
+    try:
+        adapter.extract_relationships(text="Alice uses Qdrant")
+    except NotImplementedError:
+        pass
+    else:
+        raise AssertionError("expected NotImplementedError for extract_relationships")
