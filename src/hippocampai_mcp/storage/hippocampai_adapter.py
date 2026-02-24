@@ -102,6 +102,7 @@ class HippocampAIAdapter:
         k: int = 5,
         min_importance: float | None = None,
         memory_type: str | None = None,
+        search_mode: str | None = None,
         tags: list[str] | None = None,
         agent_id: str | None = None,
         project_id: str | None = None,
@@ -114,6 +115,8 @@ class HippocampAIAdapter:
             filters["min_importance"] = min_importance
         if memory_type:
             filters["type"] = memory_type
+        if search_mode:
+            filters["search_mode"] = search_mode
         if encoded_tags:
             filters["tags"] = encoded_tags
 
@@ -181,3 +184,48 @@ class HippocampAIAdapter:
 
     def stats(self, *, user_id: str) -> dict[str, Any]:
         return self._client.get_memory_statistics(user_id=user_id)
+
+    def add_relationship(
+        self,
+        *,
+        source_id: str,
+        target_id: str,
+        relation_type: str,
+        weight: float = 1.0,
+    ) -> bool:
+        payload = {
+            "source_id": source_id,
+            "target_id": target_id,
+            "relation_type": relation_type,
+            "weight": weight,
+        }
+        try:
+            return bool(self._client.add_relationship(**payload))
+        except TypeError as exc:
+            if "weight" not in str(exc):
+                raise
+            payload.pop("weight", None)
+            return bool(self._client.add_relationship(**payload))
+
+    def get_related_memories(
+        self,
+        *,
+        memory_id: str,
+        relation_types: list[str] | None = None,
+        max_depth: int = 1,
+    ) -> list[Any]:
+        payload: dict[str, Any] = {
+            "memory_id": memory_id,
+            "relation_types": relation_types,
+            "max_depth": max_depth,
+        }
+        try:
+            return self._client.get_related_memories(**payload)
+        except TypeError as exc:
+            if "relation_types" not in str(exc):
+                raise
+
+        fallback_payload: dict[str, Any] = {"memory_id": memory_id, "max_depth": max_depth}
+        if relation_types and len(relation_types) == 1:
+            fallback_payload["relation_type"] = relation_types[0]
+        return self._client.get_related_memories(**fallback_payload)

@@ -54,6 +54,14 @@ class StubStore:
         self.calls["stats"] = kwargs
         return {"total": 0}
 
+    def add_relationship(self, **kwargs):
+        self.calls["add_relationship"] = kwargs
+        return True
+
+    def get_related_memories(self, **kwargs):
+        self.calls["get_related_memories"] = kwargs
+        return [("m2", "related_to", 0.8)]
+
 
 def test_remember_project_memory_scopes_to_project() -> None:
     store = StubStore()
@@ -100,6 +108,21 @@ def test_recall_project_context_is_scope_deterministic() -> None:
     assert payload["count"] == 1
     assert store.calls["recall"]["scope"].value == "project"
     assert store.calls["recall"]["project_id"] == "proj-1"
+
+
+def test_recall_passes_graph_search_mode() -> None:
+    store = StubStore()
+    service = MemoryService(store)
+
+    service.recall(
+        query="pydantic",
+        user_id="u1",
+        scope="project",
+        project_id="proj-1",
+        search_mode="graph_hybrid",
+    )
+
+    assert store.calls["recall"]["search_mode"] == "graph_hybrid"
 
 
 def test_legacy_aliases_are_supported() -> None:
@@ -152,3 +175,35 @@ def test_unscoped_list_memories_does_not_force_user_preference_scope() -> None:
     service.list_memories(user_id="u1", scope=None)
 
     assert store.calls["list"]["scope"] is None
+
+
+def test_add_relationship_passthrough() -> None:
+    store = StubStore()
+    service = MemoryService(store)
+
+    created = service.add_relationship(
+        source_id="m1",
+        target_id="m2",
+        relation_type="related_to",
+        weight=0.9,
+    )
+
+    assert created is True
+    assert store.calls["add_relationship"]["source_id"] == "m1"
+    assert store.calls["add_relationship"]["target_id"] == "m2"
+    assert store.calls["add_relationship"]["relation_type"] == "related_to"
+    assert store.calls["add_relationship"]["weight"] == 0.9
+
+
+def test_get_related_memories_response_shape() -> None:
+    store = StubStore()
+    service = MemoryService(store)
+
+    payload = service.get_related_memories(memory_id="m1", max_depth=2)
+
+    assert payload["memory_id"] == "m1"
+    assert payload["count"] == 1
+    assert payload["related"][0]["memory_id"] == "m2"
+    assert payload["related"][0]["relation_type"] == "related_to"
+    assert payload["related"][0]["weight"] == 0.8
+    assert store.calls["get_related_memories"]["max_depth"] == 2

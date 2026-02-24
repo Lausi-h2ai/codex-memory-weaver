@@ -88,6 +88,23 @@ class StrictV05Client:
         self.last_call["get_memory_statistics"] = {"user_id": user_id}
         return {"total": 0}
 
+    def add_relationship(self, *, source_id, target_id, relation_type, weight=1.0):
+        self.last_call["add_relationship"] = {
+            "source_id": source_id,
+            "target_id": target_id,
+            "relation_type": relation_type,
+            "weight": weight,
+        }
+        return True
+
+    def get_related_memories(self, *, memory_id, relation_types=None, max_depth=1):
+        self.last_call["get_related_memories"] = {
+            "memory_id": memory_id,
+            "relation_types": relation_types,
+            "max_depth": max_depth,
+        }
+        return [("m2", "related_to", 0.8)]
+
 
 def test_adapter_uses_v05_keyword_names_for_all_core_methods() -> None:
     client = StrictV05Client()
@@ -115,10 +132,12 @@ def test_adapter_uses_v05_keyword_names_for_all_core_methods() -> None:
         session_id="s1",
         k=3,
         memory_type="context",
+        search_mode="graph_hybrid",
         scope=MemoryScope.PROJECT,
         project_id="proj-1",
     )
     assert "recall" in client.last_call
+    assert client.last_call["recall"]["filters"]["search_mode"] == "graph_hybrid"
 
     adapter.update(
         memory_id="m1",
@@ -133,3 +152,15 @@ def test_adapter_uses_v05_keyword_names_for_all_core_methods() -> None:
     stats = adapter.stats(user_id="u1")
     assert stats == {"total": 0}
     assert "get_memory_statistics" in client.last_call
+
+    assert adapter.add_relationship(
+        source_id="m1",
+        target_id="m2",
+        relation_type="related_to",
+        weight=0.9,
+    ) is True
+    assert "add_relationship" in client.last_call
+
+    related = adapter.get_related_memories(memory_id="m1", max_depth=2)
+    assert related == [("m2", "related_to", 0.8)]
+    assert "get_related_memories" in client.last_call

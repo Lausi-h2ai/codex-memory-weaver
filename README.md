@@ -25,6 +25,9 @@ A feature-complete Model Context Protocol (MCP) server that provides persistent 
 - ✅ **extract_facts**: Structured fact extraction from text
 - ✅ **cluster_memories**: Automatic semantic clustering
 - ✅ Pattern detection across memory corpus
+- ✅ **add_relationship**: Link memories in the knowledge graph
+- ✅ **get_related_memories**: Traverse memory relations by depth
+- ✅ Graph-aware retrieval hint via `recall(..., search_mode="graph_hybrid")`
 
 ### Temporal Features
 - ✅ **get_recent_memories**: Time-based memory retrieval
@@ -35,6 +38,11 @@ A feature-complete Model Context Protocol (MCP) server that provides persistent 
 - ✅ **get_memory_statistics**: Usage metrics and insights
 - ✅ Memory type distribution
 - ✅ Tag analysis
+
+### Relevance Feedback Loop
+- ✅ **submit_memory_feedback**: Submit relevance labels (when backend supports feedback APIs)
+- ✅ **get_memory_feedback**: Retrieve aggregated feedback score per memory
+- ✅ **get_feedback_stats**: Retrieve user-level feedback statistics
 
 ## Prerequisites
 

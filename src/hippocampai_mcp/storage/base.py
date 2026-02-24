@@ -33,6 +33,7 @@ class MemoryStore(Protocol):
         k: int = 5,
         min_importance: float | None = None,
         memory_type: str | None = None,
+        search_mode: str | None = None,
         tags: list[str] | None = None,
         agent_id: str | None = None,
         project_id: str | None = None,
@@ -67,3 +68,20 @@ class MemoryStore(Protocol):
     ) -> list[Any]: ...
 
     def stats(self, *, user_id: str) -> dict[str, Any]: ...
+
+    def add_relationship(
+        self,
+        *,
+        source_id: str,
+        target_id: str,
+        relation_type: str,
+        weight: float = 1.0,
+    ) -> bool: ...
+
+    def get_related_memories(
+        self,
+        *,
+        memory_id: str,
+        relation_types: list[str] | None = None,
+        max_depth: int = 1,
+    ) -> list[Any]: ...

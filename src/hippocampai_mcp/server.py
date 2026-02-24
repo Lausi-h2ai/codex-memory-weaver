@@ -91,6 +91,41 @@ def _check_tcp_dependency(url: str, default_port: int) -> dict[str, Any]:
         return {"status": "error", "host": host, "port": port, "error": str(exc)}
 
 
+def _load_persisted_graph(file_path: str) -> Any:
+    """Load persisted knowledge graph from disk."""
+    from hippocampai.graph.graph_persistence import load
+
+    return load(file_path)
+
+
+def _autoload_knowledge_graph(client: Any) -> None:
+    """Best-effort graph autoload for persistence continuity across sessions."""
+    config = _attr(client, "config")
+    graph_path = _attr(config, "graph_persistence_path")
+    if not graph_path:
+        return
+    if not os.path.exists(graph_path):
+        logger.info("Knowledge graph file not found at startup: %s", graph_path)
+        return
+    try:
+        loaded_graph = _load_persisted_graph(graph_path)
+        client.graph = loaded_graph
+        graph_retriever = _attr(client, "graph_retriever")
+        if graph_retriever is not None and hasattr(graph_retriever, "graph"):
+            graph_retriever.graph = loaded_graph
+        raw_graph = _attr(loaded_graph, "graph")
+        nodes = raw_graph.number_of_nodes() if raw_graph and hasattr(raw_graph, "number_of_nodes") else None
+        edges = raw_graph.number_of_edges() if raw_graph and hasattr(raw_graph, "number_of_edges") else None
+        logger.info(
+            "Loaded persisted knowledge graph from %s (nodes=%s, edges=%s)",
+            graph_path,
+            nodes,
+            edges,
+        )
+    except Exception as exc:
+        logger.warning("Failed to load persisted knowledge graph from %s: %s", graph_path, exc)
+
+
 def _initialize_runtime_clients() -> None:
     """Initialize runtime clients if they are not ready."""
     global memory_client, memory_store, memory_service
@@ -114,6 +149,7 @@ def _initialize_runtime_clients() -> None:
         llm_provider="ollama",
         llm_model=ollama_model,
     )
+    _autoload_knowledge_graph(memory_client)
     memory_store = HippocampAIAdapter(memory_client)
     memory_service = MemoryService(memory_store)
 
@@ -280,6 +316,7 @@ def recall(
     k: int = 5,
     min_importance: Optional[float] = None,
     memory_type: Optional[str] = None,
+    search_mode: Optional[str] = None,
     tags: Optional[list[str]] = None,
     agent_id: Optional[str] = None,
     project: Optional[str] = None,
@@ -296,6 +333,7 @@ def recall(
         k: Number of results to return (default: 5)
         min_importance: Minimum importance threshold (0-10)
         memory_type: Filter by memory type
+        search_mode: Retrieval strategy hint (e.g. "graph_hybrid")
         tags: Filter by tags (AND logic)
         agent_id: Filter by agent
         project: Filter by project name
@@ -319,6 +357,7 @@ def recall(
             k=k,
             min_importance=min_importance,
             memory_type=memory_type,
+            search_mode=search_mode,
             tags=tags,
             include_cross_scope=False,
         )
@@ -970,6 +1009,176 @@ def get_recent_operations(limit: int = 20) -> dict[str, Any]:
 
 
 # ============================================================================
+# RELEVANCE FEEDBACK LOOP
+# ============================================================================
+
+@mcp.tool()
+def submit_memory_feedback(
+    memory_id: str,
+    user_id: str,
+    feedback_type: str,
+    query: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Submit relevance feedback for a retrieved memory.
+
+    Args:
+        memory_id: Memory identifier
+        user_id: User identifier
+        feedback_type: One of relevant, not_relevant, partially_relevant, outdated
+        query: Optional source query that produced the memory
+
+    Returns:
+        Feedback acknowledgement with score when supported by backend
+    """
+    correlation_id = _new_correlation_id()
+    emit_tool_log(
+        logger, event="tool_start", tool="submit_memory_feedback", correlation_id=correlation_id
+    )
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if hasattr(client, "submit_memory_feedback"):
+            response = client.submit_memory_feedback(
+                memory_id=memory_id,
+                user_id=user_id,
+                feedback_type=feedback_type,
+                query=query,
+            )
+            emit_tool_log(
+                logger,
+                event="tool_success",
+                tool="submit_memory_feedback",
+                correlation_id=correlation_id,
+                memory_id=memory_id,
+            )
+            return response
+        return _error_payload(
+            code="not_supported",
+            message="submit_memory_feedback is not available on this HippocampAI client",
+            correlation_id=correlation_id,
+        )
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="submit_memory_feedback",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="feedback_submit_failed",
+            message="Failed to submit memory feedback",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def get_memory_feedback(memory_id: str) -> dict[str, Any]:
+    """
+    Get aggregated relevance score for a memory.
+
+    Args:
+        memory_id: Memory identifier
+
+    Returns:
+        Aggregated feedback score payload when supported by backend
+    """
+    correlation_id = _new_correlation_id()
+    emit_tool_log(
+        logger, event="tool_start", tool="get_memory_feedback", correlation_id=correlation_id
+    )
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if hasattr(client, "get_memory_feedback"):
+            response = client.get_memory_feedback(memory_id=memory_id)
+            emit_tool_log(
+                logger,
+                event="tool_success",
+                tool="get_memory_feedback",
+                correlation_id=correlation_id,
+                memory_id=memory_id,
+            )
+            return response
+        return _error_payload(
+            code="not_supported",
+            message="get_memory_feedback is not available on this HippocampAI client",
+            correlation_id=correlation_id,
+        )
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="get_memory_feedback",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="feedback_fetch_failed",
+            message="Failed to fetch memory feedback",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def get_feedback_stats(user_id: str) -> dict[str, Any]:
+    """
+    Get relevance feedback statistics for a user.
+
+    Args:
+        user_id: User identifier
+
+    Returns:
+        Feedback aggregate statistics when supported by backend
+    """
+    correlation_id = _new_correlation_id()
+    emit_tool_log(
+        logger, event="tool_start", tool="get_feedback_stats", correlation_id=correlation_id
+    )
+    client = _require_memory_client(correlation_id=correlation_id)
+    if isinstance(client, dict):
+        return client
+    try:
+        if hasattr(client, "get_feedback_stats"):
+            response = client.get_feedback_stats(user_id=user_id)
+            emit_tool_log(
+                logger,
+                event="tool_success",
+                tool="get_feedback_stats",
+                correlation_id=correlation_id,
+                user_id=user_id,
+            )
+            return response
+        return _error_payload(
+            code="not_supported",
+            message="get_feedback_stats is not available on this HippocampAI client",
+            correlation_id=correlation_id,
+        )
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="get_feedback_stats",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="feedback_stats_failed",
+            message="Failed to fetch feedback statistics",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+# ============================================================================
 # SESSION MANAGEMENT
 # ============================================================================
 
@@ -1220,6 +1429,126 @@ def cluster_memories(
     except Exception as e:
         logger.error(f"Error clustering memories: {e}")
         return {"error": str(e), "clusters": [], "cluster_count": 0}
+
+
+# ============================================================================
+# GRAPH & RELATIONSHIPS
+# ============================================================================
+
+@mcp.tool()
+def add_relationship(
+    source_id: str,
+    target_id: str,
+    relation_type: str,
+    weight: float = 1.0,
+) -> dict[str, Any]:
+    """
+    Add a relationship edge between two memories in the knowledge graph.
+
+    Args:
+        source_id: Source memory ID
+        target_id: Target memory ID
+        relation_type: Relationship type (e.g. related_to, supports, contradicts)
+        weight: Relationship strength (default: 1.0)
+
+    Returns:
+        Success payload with relationship details
+    """
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="add_relationship", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
+    try:
+        success = service.add_relationship(
+            source_id=source_id,
+            target_id=target_id,
+            relation_type=relation_type,
+            weight=weight,
+        )
+        response = {
+            "success": success,
+            "source_id": source_id,
+            "target_id": target_id,
+            "relation_type": relation_type,
+            "weight": weight,
+        }
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="add_relationship",
+            correlation_id=correlation_id,
+            success=success,
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="add_relationship",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="add_relationship_failed",
+            message="Failed to add memory relationship",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
+
+
+@mcp.tool()
+def get_related_memories(
+    memory_id: str,
+    relation_types: Optional[list[str]] = None,
+    max_depth: int = 1,
+) -> dict[str, Any]:
+    """
+    Retrieve memories connected to a given memory in the knowledge graph.
+
+    Args:
+        memory_id: Root memory ID
+        relation_types: Optional relationship-type filter list
+        max_depth: Traversal depth (default: 1)
+
+    Returns:
+        Related memories with relation metadata
+    """
+    correlation_id = _new_correlation_id()
+    emit_tool_log(logger, event="tool_start", tool="get_related_memories", correlation_id=correlation_id)
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
+    try:
+        response = service.get_related_memories(
+            memory_id=memory_id,
+            relation_types=relation_types,
+            max_depth=max_depth,
+        )
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="get_related_memories",
+            correlation_id=correlation_id,
+            result_count=response.get("count", 0),
+        )
+        return response
+    except Exception as e:
+        emit_tool_log(
+            logger,
+            event="tool_error",
+            tool="get_related_memories",
+            correlation_id=correlation_id,
+            error=str(e),
+            level=logging.ERROR,
+        )
+        return _error_payload(
+            code="get_related_memories_failed",
+            message="Failed to retrieve related memories",
+            details={"error": str(e)},
+            correlation_id=correlation_id,
+        )
 
 
 # ============================================================================

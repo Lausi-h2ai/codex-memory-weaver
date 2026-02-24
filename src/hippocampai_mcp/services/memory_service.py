@@ -157,6 +157,7 @@ class MemoryService:
         k: int = 5,
         min_importance: float | None = None,
         memory_type: str | None = None,
+        search_mode: str | None = None,
         tags: list[str] | None = None,
         include_cross_scope: bool = False,
     ) -> dict[str, Any]:
@@ -175,6 +176,7 @@ class MemoryService:
             k=k,
             min_importance=min_importance,
             memory_type=memory_type,
+            search_mode=search_mode,
             tags=tags,
             agent_id=agent_id,
             project_id=project_id,
@@ -318,3 +320,53 @@ class MemoryService:
 
     def get_memory_statistics(self, *, user_id: str) -> dict[str, Any]:
         return self.store.stats(user_id=user_id)
+
+    def add_relationship(
+        self,
+        *,
+        source_id: str,
+        target_id: str,
+        relation_type: str,
+        weight: float = 1.0,
+    ) -> bool:
+        return self.store.add_relationship(
+            source_id=source_id,
+            target_id=target_id,
+            relation_type=relation_type,
+            weight=weight,
+        )
+
+    def get_related_memories(
+        self,
+        *,
+        memory_id: str,
+        relation_types: list[str] | None = None,
+        max_depth: int = 1,
+    ) -> dict[str, Any]:
+        related = self.store.get_related_memories(
+            memory_id=memory_id,
+            relation_types=relation_types,
+            max_depth=max_depth,
+        )
+        normalized: list[dict[str, Any]] = []
+        for item in related:
+            if isinstance(item, tuple):
+                target_id = item[0] if len(item) > 0 else None
+                relation_type = item[1] if len(item) > 1 else None
+                weight = item[2] if len(item) > 2 else None
+            else:
+                target_id = _attr(item, "memory_id", "target_id")
+                relation_type = _attr(item, "relation_type", "type")
+                weight = _attr(item, "weight")
+            normalized.append(
+                {
+                    "memory_id": target_id,
+                    "relation_type": relation_type,
+                    "weight": weight,
+                }
+            )
+        return {
+            "memory_id": memory_id,
+            "count": len(normalized),
+            "related": normalized,
+        }
