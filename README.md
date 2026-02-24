@@ -122,6 +122,18 @@ REDIS_URL=redis://localhost:6379
 HIPPOCAMPAI_API_BASE_URL=http://localhost:8000
 ```
 
+### Dependency Matrix
+
+| Feature Group | Required Config | Notes |
+| --- | --- | --- |
+| Core memory + scoped memory tools | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `QDRANT_URL`, `REDIS_URL` | Includes remember/recall, sessions, extraction, updates, deletes |
+| Cross-session insights | Same as core | Includes `detect_patterns`, `track_behavior_changes`, `analyze_preference_drift`, `detect_habits`, `analyze_trends` |
+| Knowledge graph + graph extras | Same as core | Includes `add_relationship`, `get_related_memories`, `get_memory_clusters`, `get_knowledge_subgraph`, `extract_relationships`, and `search_mode="graph_hybrid"` hint |
+| Relevance feedback | Same as core | Requires backend feedback API support; unsupported backends return `not_supported` |
+| Procedural memory bridge | `HIPPOCAMPAI_API_BASE_URL` | Required only for `list/extract/inject/update/consolidate` procedural rule tools (`/v1/procedural/*`) |
+
+Package-only workflow is supported. If you are not using procedural tools, you can leave `HIPPOCAMPAI_API_BASE_URL` unset.
+
 ### Test the Server
 
 ```bash
@@ -173,12 +185,13 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ### Configure for Other MCP Clients
 
 For VS Code Codex, Cursor, or other MCP-compatible tools, use similar configuration pointing to the server script.
+Set `HIPPOCAMPAI_API_BASE_URL` only if you plan to use procedural-memory bridge tools.
 
 For additional Windows stdio variants (`uv`, full-path `venv` Python), see `docs/codex-config-examples.md`.
 
 ### Scoped Tool Naming Conventions
 
-- `user_id`: stable developer identity (example: `laure`, `alice@company.com`)
+- `user_id`: stable developer identity (example: `dev-user`, `engineer@company.com`)
 - `project_id`: stable workspace/repo identity (example: `hippocampai-mcp`)
 - `agent_id`: stable agent identity (example: `codex-main`, `codex-debugger`)
 
