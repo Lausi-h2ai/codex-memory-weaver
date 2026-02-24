@@ -1035,25 +1035,34 @@ def submit_memory_feedback(
     emit_tool_log(
         logger, event="tool_start", tool="submit_memory_feedback", correlation_id=correlation_id
     )
-    client = _require_memory_client(correlation_id=correlation_id)
-    if isinstance(client, dict):
-        return client
+    normalized_feedback_type = feedback_type.strip().lower()
+    allowed_feedback_types = {"relevant", "not_relevant", "partially_relevant", "outdated"}
+    if normalized_feedback_type not in allowed_feedback_types:
+        return _error_payload(
+            code="validation_error",
+            message="feedback_type must be one of: relevant, not_relevant, partially_relevant, outdated",
+            details={"feedback_type": feedback_type},
+            correlation_id=correlation_id,
+        )
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        if hasattr(client, "submit_memory_feedback"):
-            response = client.submit_memory_feedback(
-                memory_id=memory_id,
-                user_id=user_id,
-                feedback_type=feedback_type,
-                query=query,
-            )
-            emit_tool_log(
-                logger,
-                event="tool_success",
-                tool="submit_memory_feedback",
-                correlation_id=correlation_id,
-                memory_id=memory_id,
-            )
-            return response
+        response = service.submit_memory_feedback(
+            memory_id=memory_id,
+            user_id=user_id,
+            feedback_type=normalized_feedback_type,
+            query=query,
+        )
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="submit_memory_feedback",
+            correlation_id=correlation_id,
+            memory_id=memory_id,
+        )
+        return response
+    except NotImplementedError:
         return _error_payload(
             code="not_supported",
             message="submit_memory_feedback is not available on this HippocampAI client",
@@ -1091,20 +1100,20 @@ def get_memory_feedback(memory_id: str) -> dict[str, Any]:
     emit_tool_log(
         logger, event="tool_start", tool="get_memory_feedback", correlation_id=correlation_id
     )
-    client = _require_memory_client(correlation_id=correlation_id)
-    if isinstance(client, dict):
-        return client
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        if hasattr(client, "get_memory_feedback"):
-            response = client.get_memory_feedback(memory_id=memory_id)
-            emit_tool_log(
-                logger,
-                event="tool_success",
-                tool="get_memory_feedback",
-                correlation_id=correlation_id,
-                memory_id=memory_id,
-            )
-            return response
+        response = service.get_memory_feedback(memory_id=memory_id)
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="get_memory_feedback",
+            correlation_id=correlation_id,
+            memory_id=memory_id,
+        )
+        return response
+    except NotImplementedError:
         return _error_payload(
             code="not_supported",
             message="get_memory_feedback is not available on this HippocampAI client",
@@ -1142,20 +1151,20 @@ def get_feedback_stats(user_id: str) -> dict[str, Any]:
     emit_tool_log(
         logger, event="tool_start", tool="get_feedback_stats", correlation_id=correlation_id
     )
-    client = _require_memory_client(correlation_id=correlation_id)
-    if isinstance(client, dict):
-        return client
+    service = _require_memory_service(correlation_id=correlation_id)
+    if isinstance(service, dict):
+        return service
     try:
-        if hasattr(client, "get_feedback_stats"):
-            response = client.get_feedback_stats(user_id=user_id)
-            emit_tool_log(
-                logger,
-                event="tool_success",
-                tool="get_feedback_stats",
-                correlation_id=correlation_id,
-                user_id=user_id,
-            )
-            return response
+        response = service.get_feedback_stats(user_id=user_id)
+        emit_tool_log(
+            logger,
+            event="tool_success",
+            tool="get_feedback_stats",
+            correlation_id=correlation_id,
+            user_id=user_id,
+        )
+        return response
+    except NotImplementedError:
         return _error_payload(
             code="not_supported",
             message="get_feedback_stats is not available on this HippocampAI client",

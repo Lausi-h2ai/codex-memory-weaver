@@ -8,8 +8,105 @@ from hippocampai_mcp.domain.models import MemoryScope
 
 
 class HippocampAIAdapter:
+    _relation_type_enum: Any | None = None
+    _relation_type_enum_resolved: bool = False
+
     def __init__(self, client: Any) -> None:
         self._client = client
+
+    @classmethod
+    def _resolve_relation_type_enum(cls) -> Any | None:
+        if cls._relation_type_enum_resolved:
+            return cls._relation_type_enum
+        cls._relation_type_enum_resolved = True
+
+        try:
+            from hippocampai.graph.memory_graph import RelationType as relation_type_enum
+
+            cls._relation_type_enum = relation_type_enum
+            return cls._relation_type_enum
+        except Exception:
+            pass
+
+        try:
+            from hippocampai.client import RelationType as relation_type_enum
+
+            cls._relation_type_enum = relation_type_enum
+            return cls._relation_type_enum
+        except Exception:
+            cls._relation_type_enum = None
+            return None
+
+    @classmethod
+    def _coerce_relation_type(cls, relation_type: str) -> Any:
+        relation_type_enum = cls._resolve_relation_type_enum()
+        if relation_type_enum is None:
+            return relation_type
+        try:
+            return relation_type_enum(relation_type)
+        except Exception:
+            enum_member = getattr(relation_type_enum, relation_type.upper(), None)
+            return enum_member if enum_member is not None else relation_type
+
+    @classmethod
+    def _coerce_relation_types(cls, relation_types: list[str] | None) -> list[Any] | None:
+        if relation_types is None:
+            return None
+        return [cls._coerce_relation_type(relation_type) for relation_type in relation_types]
+
+    @staticmethod
+    def _relationship_result_to_success(result: Any) -> bool:
+        if isinstance(result, bool):
+            return result
+        if result is None:
+            return True
+        if isinstance(result, dict):
+            if "success" in result:
+                return bool(result["success"])
+            return True
+        success_attr = getattr(result, "success", None)
+        if success_attr is not None:
+            return bool(success_attr)
+        return bool(result)
+
+    def _ensure_graph_nodes(self, memory_ids: list[str]) -> bool:
+        graph = getattr(self._client, "graph", None)
+        add_memory = getattr(graph, "add_memory", None)
+        get_memory = getattr(self._client, "get_memory", None)
+        if not callable(add_memory) or not callable(get_memory):
+            return False
+
+        added_any = False
+        graph_nodes = getattr(graph, "graph", None)
+
+        for memory_id in memory_ids:
+            try:
+                if graph_nodes is not None and memory_id in graph_nodes:
+                    continue
+            except Exception:
+                pass
+
+            try:
+                memory = get_memory(memory_id)
+            except Exception:
+                continue
+
+            user_id = getattr(memory, "user_id", None)
+            if memory is None or not user_id:
+                continue
+
+            metadata: dict[str, Any] = {}
+            memory_type = getattr(memory, "type", None)
+            if memory_type is not None:
+                metadata["type"] = getattr(memory_type, "value", memory_type)
+            created_at = getattr(memory, "created_at", None)
+            if created_at is not None:
+                metadata["created_at"] = (
+                    created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
+                )
+            add_memory(memory_id, user_id, metadata or None)
+            added_any = True
+        return added_any
 
     @staticmethod
     def _encode_tags(
@@ -196,16 +293,25 @@ class HippocampAIAdapter:
         payload = {
             "source_id": source_id,
             "target_id": target_id,
-            "relation_type": relation_type,
+            "relation_type": self._coerce_relation_type(relation_type),
             "weight": weight,
         }
         try:
-            return bool(self._client.add_relationship(**payload))
+            result = self._client.add_relationship(**payload)
         except TypeError as exc:
             if "weight" not in str(exc):
                 raise
             payload.pop("weight", None)
-            return bool(self._client.add_relationship(**payload))
+            result = self._client.add_relationship(**payload)
+
+        success = self._relationship_result_to_success(result)
+        if success:
+            return True
+
+        if self._ensure_graph_nodes([source_id, target_id]):
+            retry_result = self._client.add_relationship(**payload)
+            return self._relationship_result_to_success(retry_result)
+        return False
 
     def get_related_memories(
         self,
@@ -216,7 +322,7 @@ class HippocampAIAdapter:
     ) -> list[Any]:
         payload: dict[str, Any] = {
             "memory_id": memory_id,
-            "relation_types": relation_types,
+            "relation_types": self._coerce_relation_types(relation_types),
             "max_depth": max_depth,
         }
         try:
@@ -227,5 +333,32 @@ class HippocampAIAdapter:
 
         fallback_payload: dict[str, Any] = {"memory_id": memory_id, "max_depth": max_depth}
         if relation_types and len(relation_types) == 1:
-            fallback_payload["relation_type"] = relation_types[0]
+            fallback_payload["relation_type"] = self._coerce_relation_type(relation_types[0])
         return self._client.get_related_memories(**fallback_payload)
+
+    def submit_memory_feedback(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        feedback_type: str,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        if not hasattr(self._client, "submit_memory_feedback"):
+            raise NotImplementedError("submit_memory_feedback is not available on this client")
+        return self._client.submit_memory_feedback(
+            memory_id=memory_id,
+            user_id=user_id,
+            feedback_type=feedback_type,
+            query=query,
+        )
+
+    def get_memory_feedback(self, *, memory_id: str) -> dict[str, Any]:
+        if not hasattr(self._client, "get_memory_feedback"):
+            raise NotImplementedError("get_memory_feedback is not available on this client")
+        return self._client.get_memory_feedback(memory_id=memory_id)
+
+    def get_feedback_stats(self, *, user_id: str) -> dict[str, Any]:
+        if not hasattr(self._client, "get_feedback_stats"):
+            raise NotImplementedError("get_feedback_stats is not available on this client")
+        return self._client.get_feedback_stats(user_id=user_id)

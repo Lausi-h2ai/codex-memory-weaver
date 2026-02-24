@@ -62,6 +62,18 @@ class StubStore:
         self.calls["get_related_memories"] = kwargs
         return [("m2", "related_to", 0.8)]
 
+    def submit_memory_feedback(self, **kwargs):
+        self.calls["submit_memory_feedback"] = kwargs
+        return {"memory_id": kwargs["memory_id"], "feedback_type": kwargs["feedback_type"]}
+
+    def get_memory_feedback(self, **kwargs):
+        self.calls["get_memory_feedback"] = kwargs
+        return {"memory_id": kwargs["memory_id"], "score": 0.75}
+
+    def get_feedback_stats(self, **kwargs):
+        self.calls["get_feedback_stats"] = kwargs
+        return {"user_id": kwargs["user_id"], "stats": {"relevant": 2}}
+
 
 def test_remember_project_memory_scopes_to_project() -> None:
     store = StubStore()
@@ -207,3 +219,22 @@ def test_get_related_memories_response_shape() -> None:
     assert payload["related"][0]["relation_type"] == "related_to"
     assert payload["related"][0]["weight"] == 0.8
     assert store.calls["get_related_memories"]["max_depth"] == 2
+
+
+def test_feedback_methods_passthrough() -> None:
+    store = StubStore()
+    service = MemoryService(store)
+
+    submitted = service.submit_memory_feedback(
+        memory_id="m1",
+        user_id="u1",
+        feedback_type="relevant",
+        query="auth",
+    )
+    score = service.get_memory_feedback(memory_id="m1")
+    stats = service.get_feedback_stats(user_id="u1")
+
+    assert submitted["feedback_type"] == "relevant"
+    assert score["memory_id"] == "m1"
+    assert stats["user_id"] == "u1"
+    assert store.calls["submit_memory_feedback"]["query"] == "auth"

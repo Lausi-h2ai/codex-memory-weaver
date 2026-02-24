@@ -10,6 +10,8 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.items = []
         self.next_id = 1
+        self.feedback_by_memory = {}
+        self.feedback_counts = {}
 
     def remember(self, **kwargs):
         item = {
@@ -60,7 +62,13 @@ class InMemoryStore:
                 continue
             if not self._matches_scope(item, scope, project_id, agent_id):
                 continue
-            results.append(SimpleNamespace(memory=SimpleNamespace(**item), score=1.0))
+            feedback = self.feedback_by_memory.get(item["id"], {"score": 0.0})
+            results.append(
+                SimpleNamespace(
+                    memory=SimpleNamespace(**item),
+                    score=1.0 + (feedback["score"] * 0.1),
+                )
+            )
         return results
 
     def list(self, **kwargs):
@@ -85,6 +93,41 @@ class InMemoryStore:
 
     def stats(self, **kwargs):
         return {"total": len(self.items)}
+
+    def submit_memory_feedback(self, **kwargs):
+        value_by_type = {
+            "relevant": 1.0,
+            "not_relevant": 0.0,
+            "partially_relevant": 0.5,
+            "outdated": 0.0,
+        }
+        memory_id = kwargs["memory_id"]
+        user_id = kwargs["user_id"]
+        feedback_type = kwargs["feedback_type"]
+        value = value_by_type[feedback_type]
+
+        state = self.feedback_by_memory.setdefault(memory_id, {"score": 0.0, "event_count": 0})
+        state["score"] = ((state["score"] * state["event_count"]) + value) / (state["event_count"] + 1)
+        state["event_count"] += 1
+
+        counts = self.feedback_counts.setdefault(user_id, {})
+        counts[feedback_type] = counts.get(feedback_type, 0) + 1
+
+        return {
+            "memory_id": memory_id,
+            "feedback_type": feedback_type,
+            "score": state["score"],
+            "event_count": state["event_count"],
+        }
+
+    def get_memory_feedback(self, **kwargs):
+        memory_id = kwargs["memory_id"]
+        state = self.feedback_by_memory.get(memory_id, {"score": 0.0, "event_count": 0})
+        return {"memory_id": memory_id, "score": state["score"], "event_count": state["event_count"]}
+
+    def get_feedback_stats(self, **kwargs):
+        user_id = kwargs["user_id"]
+        return {"user_id": user_id, "stats": self.feedback_counts.get(user_id, {})}
 
 
 def test_scope_isolation_across_projects() -> None:
@@ -157,3 +200,27 @@ def test_hippocampai_v05_signature_expectations() -> None:
     assert "user_id" in get_memories_params
     assert "filters" in get_memories_params
     assert "limit" in get_memories_params
+
+
+def test_feedback_round_trip_influences_subsequent_recall_score() -> None:
+    service = MemoryService(InMemoryStore())
+    stored = service.remember_project_memory(text="Coffee: oat milk only", user_id="u1", project_id="alpha")
+
+    before = service.recall_project_context(query="coffee", user_id="u1", project_id="alpha")
+    before_score = before["results"][0]["score"]
+
+    submitted = service.submit_memory_feedback(
+        memory_id=stored["id"],
+        user_id="u1",
+        feedback_type="relevant",
+        query="coffee",
+    )
+    per_memory = service.get_memory_feedback(memory_id=stored["id"])
+    stats = service.get_feedback_stats(user_id="u1")
+    after = service.recall_project_context(query="coffee", user_id="u1", project_id="alpha")
+    after_score = after["results"][0]["score"]
+
+    assert submitted["memory_id"] == stored["id"]
+    assert per_memory["event_count"] == 1
+    assert stats["stats"]["relevant"] == 1
+    assert after_score > before_score

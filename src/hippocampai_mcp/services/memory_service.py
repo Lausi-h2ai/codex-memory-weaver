@@ -321,6 +321,27 @@ class MemoryService:
     def get_memory_statistics(self, *, user_id: str) -> dict[str, Any]:
         return self.store.stats(user_id=user_id)
 
+    def submit_memory_feedback(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        feedback_type: str,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        return self.store.submit_memory_feedback(
+            memory_id=memory_id,
+            user_id=user_id,
+            feedback_type=feedback_type,
+            query=query,
+        )
+
+    def get_memory_feedback(self, *, memory_id: str) -> dict[str, Any]:
+        return self.store.get_memory_feedback(memory_id=memory_id)
+
+    def get_feedback_stats(self, *, user_id: str) -> dict[str, Any]:
+        return self.store.get_feedback_stats(user_id=user_id)
+
     def add_relationship(
         self,
         *,

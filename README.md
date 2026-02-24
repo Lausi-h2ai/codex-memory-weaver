@@ -43,6 +43,9 @@ A feature-complete Model Context Protocol (MCP) server that provides persistent 
 - ✅ **submit_memory_feedback**: Submit relevance labels (when backend supports feedback APIs)
 - ✅ **get_memory_feedback**: Retrieve aggregated feedback score per memory
 - ✅ **get_feedback_stats**: Retrieve user-level feedback statistics
+- Valid `feedback_type` values: `relevant`, `not_relevant`, `partially_relevant`, `outdated`
+- Invalid `feedback_type` returns `validation_error`
+- Backends without feedback APIs return `not_supported` (with `correlation_id`)
 
 ## Prerequisites
 
@@ -189,6 +192,17 @@ Importance: 9
 ### Recall relevant context
 ```
 Recall memories about "database patterns and async handling" for project "my-api-service"
+```
+
+### Submit relevance feedback
+```
+submit_memory_feedback(memory_id="m1", user_id="your-username", feedback_type="relevant", query="database patterns")
+```
+
+### Read feedback aggregates
+```
+get_memory_feedback(memory_id="m1")
+get_feedback_stats(user_id="your-username")
 ```
 
 ### Extract from conversation
