@@ -204,6 +204,8 @@ class HippocampAIAdapter:
         agent_id: str | None = None,
         project_id: str | None = None,
         scope: MemoryScope | None = None,
+        created_after_iso: str | None = None,
+        created_before_iso: str | None = None,
     ) -> list[Any]:
         filters: dict[str, Any] = {}
         encoded_tags = self._encode_tags(scope=scope, project_id=project_id, agent_id=agent_id, tags=tags)
@@ -216,6 +218,10 @@ class HippocampAIAdapter:
             filters["search_mode"] = search_mode
         if encoded_tags:
             filters["tags"] = encoded_tags
+        if created_after_iso:
+            filters["created_after"] = created_after_iso
+        if created_before_iso:
+            filters["created_before"] = created_before_iso
 
         return self._client.recall(
             query=query,

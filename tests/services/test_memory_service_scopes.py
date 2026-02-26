@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -32,7 +33,7 @@ class StubStore:
                     tags=["scope:project"],
                     session_id="s1",
                     agent_id=kwargs.get("agent_id"),
-                    created_at=None,
+                    created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
                 ),
                 score=0.9,
             )
@@ -266,3 +267,57 @@ def test_graph_extras_methods_passthrough() -> None:
     assert subgraph["subgraph"]["nodes"][0]["id"] == "m1"
     assert extracted["count"] == 1
     assert extracted["relationships"][0]["relation_type"] == "uses"
+
+
+def test_recall_passes_temporal_filters_to_store_and_filters_response() -> None:
+    store = StubStore()
+    service = MemoryService(store)
+
+    payload = service.recall(
+        query="ctx",
+        user_id="u1",
+        scope="project",
+        project_id="proj-1",
+        created_after_iso="2026-01-10T00:00:00+00:00",
+        created_before_iso="2026-01-20T00:00:00+00:00",
+    )
+
+    assert payload["count"] == 1
+    assert store.calls["recall"]["created_after_iso"] == "2026-01-10T00:00:00+00:00"
+    assert store.calls["recall"]["created_before_iso"] == "2026-01-20T00:00:00+00:00"
+
+
+def test_recall_temporal_post_filter_drops_out_of_window_results() -> None:
+    store = StubStore()
+
+    def _recall(**kwargs):
+        store.calls["recall"] = kwargs
+        return [
+            SimpleNamespace(
+                memory=SimpleNamespace(
+                    id="m1",
+                    text="old",
+                    type="context",
+                    importance=0.7,
+                    tags=["scope:project"],
+                    session_id="s1",
+                    agent_id=None,
+                    created_at=datetime(2025, 1, 15, tzinfo=timezone.utc),
+                ),
+                score=0.9,
+            )
+        ]
+
+    store.recall = _recall
+    service = MemoryService(store)
+
+    payload = service.recall(
+        query="ctx",
+        user_id="u1",
+        scope="project",
+        project_id="proj-1",
+        created_after_iso="2026-01-10T00:00:00+00:00",
+    )
+
+    assert payload["count"] == 0
+    assert payload["results"] == []

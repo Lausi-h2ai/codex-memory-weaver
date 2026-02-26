@@ -397,12 +397,25 @@ export GROQ_API_KEY=your-key
 - Returns: memory ID, extracted facts, importance
 
 **recall(query, user_id, ...)**
-- Hybrid search across memories
+- Hybrid search across memories with optional temporal constraints
+- Supports `time_window` (`LAST_HOUR`/`LAST_DAY`/`LAST_WEEK`/`LAST_MONTH`/`LAST_YEAR`) or explicit `created_after_iso`/`created_before_iso`
 - Returns: ranked list of relevant memories
 
 **extract_from_conversation(conversation, user_id, ...)**
 - Batch memory extraction from conversation
 - Returns: list of extracted and stored memories
+
+Example (recent and relevant in one call):
+
+```python
+recent_relevant = recall(
+    query="oauth token refresh workaround",
+    user_id="alice",
+    project="payments-api",
+    time_window="LAST_WEEK",
+    k=5,
+)
+```
 
 ### Session Tools
 
@@ -427,8 +440,8 @@ export GROQ_API_KEY=your-key
 ### Temporal Tools
 
 **get_recent_memories(user_id, time_window)**
-- Time-based memory retrieval
-- Windows: LASTHOUR, LASTDAY, LASTWEEK, LASTMONTH
+- Time-based memory retrieval using the same window normalization as `recall`
+- Windows: LAST_HOUR, LAST_DAY, LAST_WEEK, LAST_MONTH, LAST_YEAR
 
 **schedule_memory(text, user_id, scheduled_for_iso, recurrence)**
 - Schedule future memory activation
