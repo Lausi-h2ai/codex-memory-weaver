@@ -135,9 +135,13 @@ def test_adapter_uses_v05_keyword_names_for_all_core_methods() -> None:
         search_mode="graph_hybrid",
         scope=MemoryScope.PROJECT,
         project_id="proj-1",
+        created_after_iso="2026-01-01T00:00:00+00:00",
+        created_before_iso="2026-02-01T00:00:00+00:00",
     )
     assert "recall" in client.last_call
     assert client.last_call["recall"]["filters"]["search_mode"] == "graph_hybrid"
+    assert client.last_call["recall"]["filters"]["created_after"] == "2026-01-01T00:00:00+00:00"
+    assert client.last_call["recall"]["filters"]["created_before"] == "2026-02-01T00:00:00+00:00"
 
     adapter.update(
         memory_id="m1",
