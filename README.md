@@ -398,7 +398,8 @@ export GROQ_API_KEY=your-key
 
 **recall(query, user_id, ...)**
 - Hybrid search across memories
-- Returns: ranked list of relevant memories
+- Optional usage-aware temporal decay via `recency_half_life_days`, `recency_weight`, and `usage_weight`
+- Returns: ranked list of relevant memories (`score`) plus raw backend score (`base_score`)
 
 **extract_from_conversation(conversation, user_id, ...)**
 - Batch memory extraction from conversation

@@ -385,6 +385,9 @@ def recall(
     tags: Optional[list[str]] = None,
     agent_id: Optional[str] = None,
     project: Optional[str] = None,
+    recency_half_life_days: Optional[float] = None,
+    recency_weight: float = 0.25,
+    usage_weight: float = 0.35,
 ) -> dict[str, Any]:
     """
     Retrieve relevant memories using hybrid semantic search.
@@ -402,6 +405,9 @@ def recall(
         tags: Filter by tags (AND logic)
         agent_id: Filter by agent
         project: Filter by project name
+        recency_half_life_days: Optional half-life for temporal decay. Disabled when omitted.
+        recency_weight: Blend amount of recency penalty in final score (0-1)
+        usage_weight: Boost weight applied from usage/feedback signal (0-1)
     
     Returns:
         List of relevant memories with scores and metadata
@@ -425,6 +431,9 @@ def recall(
             search_mode=search_mode,
             tags=tags,
             include_cross_scope=False,
+            recency_half_life_days=recency_half_life_days,
+            recency_weight=recency_weight,
+            usage_weight=usage_weight,
         )
         emit_tool_log(
             logger,

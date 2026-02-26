@@ -266,3 +266,108 @@ def test_graph_extras_methods_passthrough() -> None:
     assert subgraph["subgraph"]["nodes"][0]["id"] == "m1"
     assert extracted["count"] == 1
     assert extracted["relationships"][0]["relation_type"] == "uses"
+
+
+def test_recall_applies_recency_decay_when_enabled() -> None:
+    class TemporalStore(StubStore):
+        def recall(self, **kwargs):
+            self.calls["recall"] = kwargs
+            return [
+                SimpleNamespace(
+                    memory=SimpleNamespace(
+                        id="old",
+                        text="legacy auth decision",
+                        type="context",
+                        importance=0.8,
+                        tags=["scope:project"],
+                        session_id="s1",
+                        agent_id=None,
+                        created_at="2023-01-01T00:00:00+00:00",
+                        metadata={},
+                    ),
+                    score=1.0,
+                ),
+                SimpleNamespace(
+                    memory=SimpleNamespace(
+                        id="new",
+                        text="current auth decision",
+                        type="context",
+                        importance=0.8,
+                        tags=["scope:project"],
+                        session_id="s1",
+                        agent_id=None,
+                        created_at="2030-01-01T00:00:00+00:00",
+                        metadata={},
+                    ),
+                    score=1.0,
+                ),
+            ]
+
+    store = TemporalStore()
+    service = MemoryService(store)
+
+    payload = service.recall(
+        query="auth decision",
+        user_id="u1",
+        scope="project",
+        project_id="proj-1",
+        recency_half_life_days=30,
+        recency_weight=1.0,
+    )
+
+    assert payload["results"][0]["memory_id"] == "new"
+    assert payload["results"][0]["score"] > payload["results"][1]["score"]
+
+
+def test_recall_usage_signal_offsets_decay() -> None:
+    class UsageStore(StubStore):
+        def recall(self, **kwargs):
+            self.calls["recall"] = kwargs
+            return [
+                SimpleNamespace(
+                    memory=SimpleNamespace(
+                        id="old-hot",
+                        text="old but repeatedly useful",
+                        type="context",
+                        importance=0.9,
+                        tags=["scope:project"],
+                        session_id="s1",
+                        agent_id=None,
+                        created_at="2023-01-01T00:00:00+00:00",
+                        metadata={"usage_signal": 1.0},
+                    ),
+                    score=1.0,
+                ),
+                SimpleNamespace(
+                    memory=SimpleNamespace(
+                        id="new-cold",
+                        text="new but unproven",
+                        type="context",
+                        importance=0.9,
+                        tags=["scope:project"],
+                        session_id="s1",
+                        agent_id=None,
+                        created_at="2030-01-01T00:00:00+00:00",
+                        metadata={"usage_signal": 0.0},
+                    ),
+                    score=0.7,
+                ),
+            ]
+
+    store = UsageStore()
+    service = MemoryService(store)
+
+    payload = service.recall(
+        query="useful",
+        user_id="u1",
+        scope="project",
+        project_id="proj-1",
+        recency_half_life_days=14,
+        recency_weight=0.25,
+        usage_weight=1.0,
+    )
+
+    first = payload["results"][0]
+    assert first["memory_id"] == "old-hot"
+    assert first["base_score"] == 1.0
+    assert first["usage_signal"] == 1.0

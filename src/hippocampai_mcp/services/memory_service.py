@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from datetime import datetime, timezone
 from typing import Any
 
 from hippocampai_mcp.domain.models import MemoryScope
@@ -22,6 +24,43 @@ def _iso_attr(obj: Any, *names: str) -> str | None:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _recency_decay_factor(*, now: datetime, created_at: datetime | None, half_life_days: float) -> float:
+    if created_at is None or half_life_days <= 0:
+        return 1.0
+    age_days = max((now - created_at).total_seconds(), 0.0) / 86_400.0
+    return math.exp(-math.log(2.0) * age_days / half_life_days)
+
+
+def _normalize_usage_signal(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(1.0, numeric))
 
 
 class MemoryService:
@@ -160,6 +199,9 @@ class MemoryService:
         search_mode: str | None = None,
         tags: list[str] | None = None,
         include_cross_scope: bool = False,
+        recency_half_life_days: float | None = None,
+        recency_weight: float = 0.25,
+        usage_weight: float = 0.35,
     ) -> dict[str, Any]:
         scope_value = self.access.enforce_recall_scope(
             scope=scope,
@@ -182,23 +224,65 @@ class MemoryService:
             project_id=project_id,
             scope=scope_value,
         )
+        now = datetime.now(timezone.utc)
+        recency_enabled = recency_half_life_days is not None and recency_half_life_days > 0
+        bounded_recency_weight = max(0.0, min(1.0, recency_weight))
+        bounded_usage_weight = max(0.0, min(1.0, usage_weight))
+
+        response_results: list[dict[str, Any]] = []
+        for r in results:
+            memory = r.memory
+            base_score = float(r.score)
+            created_dt = _parse_datetime(_attr(memory, "created_at", "createdat"))
+            recency_factor = (
+                _recency_decay_factor(
+                    now=now,
+                    created_at=created_dt,
+                    half_life_days=recency_half_life_days or 0.0,
+                )
+                if recency_enabled
+                else 1.0
+            )
+            recency_multiplier = (1.0 - bounded_recency_weight) + (bounded_recency_weight * recency_factor)
+
+            metadata = _attr(memory, "metadata") or {}
+            usage_raw_candidates = [
+                _attr(memory, "usage_signal"),
+                _attr(memory, "feedback_score"),
+                (metadata.get("usage_signal") if isinstance(metadata, dict) else None),
+                (metadata.get("feedback_score") if isinstance(metadata, dict) else None),
+            ]
+            usage_raw = next((candidate for candidate in usage_raw_candidates if candidate is not None), None)
+            usage_signal = _normalize_usage_signal(usage_raw)
+            usage_multiplier = 1.0
+            if usage_signal is not None:
+                usage_multiplier = 1.0 + (bounded_usage_weight * usage_signal)
+
+            adjusted_score = base_score * recency_multiplier * usage_multiplier
+
+            response_results.append(
+                {
+                    "memory_id": memory.id,
+                    "text": memory.text,
+                    "score": adjusted_score,
+                    "base_score": base_score,
+                    "type": _attr(memory, "type"),
+                    "importance": _attr(memory, "importance"),
+                    "tags": _attr(memory, "tags") or [],
+                    "session_id": _attr(memory, "session_id", "sessionid"),
+                    "agent_id": _attr(memory, "agent_id", "agentid"),
+                    "created_at": _iso_attr(memory, "created_at", "createdat"),
+                    "recency_factor": recency_factor,
+                    "usage_signal": usage_signal,
+                }
+            )
+
+        response_results.sort(key=lambda item: item["score"], reverse=True)
+
         return {
             "query": query,
             "count": len(results),
-            "results": [
-                {
-                    "memory_id": r.memory.id,
-                    "text": r.memory.text,
-                    "score": r.score,
-                    "type": _attr(r.memory, "type"),
-                    "importance": _attr(r.memory, "importance"),
-                    "tags": _attr(r.memory, "tags") or [],
-                    "session_id": _attr(r.memory, "session_id", "sessionid"),
-                    "agent_id": _attr(r.memory, "agent_id", "agentid"),
-                    "created_at": _iso_attr(r.memory, "created_at", "createdat"),
-                }
-                for r in results
-            ],
+            "results": response_results,
         }
 
     def recall_project_context(self, *, query: str, user_id: str, project_id: str, **kwargs: Any) -> dict[str, Any]:
