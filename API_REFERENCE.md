@@ -200,6 +200,19 @@ results = client.recall(
     }
 )
 
+# MCP one-call: recent and relevant memories
+# (server tool `recall` converts time_window to backend created_after filters)
+recent_relevant = mcp.call_tool(
+    "recall",
+    {
+        "query": "oauth token refresh workaround",
+        "user_id": "alice",
+        "project": "payments-api",
+        "time_window": "LAST_WEEK",
+        "k": 5,
+    },
+)
+
 for result in results:
     print(f"Memory: {result.memory.text}")
     print(f"Score: {result.score:.3f}")

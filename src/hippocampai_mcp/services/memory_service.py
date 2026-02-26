@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from hippocampai_mcp.domain.models import MemoryScope
@@ -22,6 +23,47 @@ def _iso_attr(obj: Any, *names: str) -> str | None:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+
+
+
+def _parse_iso8601(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    return datetime.fromisoformat(normalized)
+
+
+def _memory_created_at(memory: Any) -> datetime | None:
+    raw = _attr(memory, "created_at", "createdat")
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return _parse_iso8601(raw)
+        except Exception:
+            return None
+    return None
+
+
+def _within_time_bounds(memory: Any, created_after_iso: str | None, created_before_iso: str | None) -> bool:
+    if not created_after_iso and not created_before_iso:
+        return True
+    created_at = _memory_created_at(memory)
+    if created_at is None:
+        return False
+    lower = _parse_iso8601(created_after_iso)
+    upper = _parse_iso8601(created_before_iso)
+    if lower is not None and created_at < lower:
+        return False
+    if upper is not None and created_at > upper:
+        return False
+    return True
 
 
 class MemoryService:
@@ -160,6 +202,8 @@ class MemoryService:
         search_mode: str | None = None,
         tags: list[str] | None = None,
         include_cross_scope: bool = False,
+        created_after_iso: str | None = None,
+        created_before_iso: str | None = None,
     ) -> dict[str, Any]:
         scope_value = self.access.enforce_recall_scope(
             scope=scope,
@@ -181,10 +225,17 @@ class MemoryService:
             agent_id=agent_id,
             project_id=project_id,
             scope=scope_value,
+            created_after_iso=created_after_iso,
+            created_before_iso=created_before_iso,
         )
+        filtered_results = [
+            r for r in results
+            if _within_time_bounds(r.memory, created_after_iso, created_before_iso)
+        ]
+
         return {
             "query": query,
-            "count": len(results),
+            "count": len(filtered_results),
             "results": [
                 {
                     "memory_id": r.memory.id,
@@ -197,7 +248,7 @@ class MemoryService:
                     "agent_id": _attr(r.memory, "agent_id", "agentid"),
                     "created_at": _iso_attr(r.memory, "created_at", "createdat"),
                 }
-                for r in results
+                for r in filtered_results
             ],
         }
 

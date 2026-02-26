@@ -111,6 +111,40 @@ def _new_correlation_id() -> str:
     return str(uuid.uuid4())
 
 
+
+
+def _resolve_temporal_bounds(
+    *,
+    time_window: str | None = None,
+    created_after_iso: str | None = None,
+    created_before_iso: str | None = None,
+) -> tuple[str | None, str | None]:
+    if created_after_iso or created_before_iso:
+        return created_after_iso, created_before_iso
+    if not time_window:
+        return None, None
+
+    normalized_window = time_window.upper().replace("-", "_")
+    time_range = getattr(TimeRange, normalized_window, None)
+    if time_range is None:
+        raise ValueError(
+            f"Unsupported time_window '{time_window}'. Use LAST_HOUR, LAST_DAY, LAST_WEEK, LAST_MONTH, or LAST_YEAR"
+        )
+
+    now = datetime.now(timezone.utc)
+    delta_by_range = {
+        TimeRange.LAST_HOUR: timedelta(hours=1),
+        TimeRange.LAST_DAY: timedelta(days=1),
+        TimeRange.LAST_WEEK: timedelta(weeks=1),
+        TimeRange.LAST_MONTH: timedelta(days=30),
+        TimeRange.LAST_YEAR: timedelta(days=365),
+    }
+    delta = delta_by_range.get(time_range)
+    if delta is None:
+        raise ValueError(f"Unsupported time_window '{time_window}'")
+    return (now - delta).isoformat(), None
+
+
 def _procedural_api_request(
     *,
     method: str,
@@ -385,6 +419,9 @@ def recall(
     tags: Optional[list[str]] = None,
     agent_id: Optional[str] = None,
     project: Optional[str] = None,
+    time_window: Optional[str] = None,
+    created_after_iso: Optional[str] = None,
+    created_before_iso: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Retrieve relevant memories using hybrid semantic search.
@@ -402,6 +439,9 @@ def recall(
         tags: Filter by tags (AND logic)
         agent_id: Filter by agent
         project: Filter by project name
+        time_window: Relative time window (LAST_HOUR/LAST_DAY/LAST_WEEK/LAST_MONTH/LAST_YEAR)
+        created_after_iso: Lower bound created-at filter in ISO 8601
+        created_before_iso: Upper bound created-at filter in ISO 8601
     
     Returns:
         List of relevant memories with scores and metadata
@@ -412,6 +452,11 @@ def recall(
     if isinstance(service, dict):
         return service
     try:
+        normalized_after_iso, normalized_before_iso = _resolve_temporal_bounds(
+            time_window=time_window,
+            created_after_iso=created_after_iso,
+            created_before_iso=created_before_iso,
+        )
         response = service.recall(
             query=query,
             user_id=user_id,
@@ -425,6 +470,8 @@ def recall(
             search_mode=search_mode,
             tags=tags,
             include_cross_scope=False,
+            created_after_iso=normalized_after_iso,
+            created_before_iso=normalized_before_iso,
         )
         emit_tool_log(
             logger,
@@ -949,12 +996,20 @@ def recall_project_context(
     min_importance: Optional[float] = None,
     memory_type: Optional[str] = None,
     tags: Optional[list[str]] = None,
+    time_window: Optional[str] = None,
+    created_after_iso: Optional[str] = None,
+    created_before_iso: Optional[str] = None,
 ) -> dict[str, Any]:
     correlation_id = _new_correlation_id()
     service = _require_memory_service(correlation_id=correlation_id)
     if isinstance(service, dict):
         return service
     try:
+        normalized_after_iso, normalized_before_iso = _resolve_temporal_bounds(
+            time_window=time_window,
+            created_after_iso=created_after_iso,
+            created_before_iso=created_before_iso,
+        )
         return service.recall_project_context(
             query=query,
             user_id=user_id,
@@ -963,6 +1018,8 @@ def recall_project_context(
             min_importance=min_importance,
             memory_type=memory_type,
             tags=tags,
+            created_after_iso=normalized_after_iso,
+            created_before_iso=normalized_before_iso,
         )
     except Exception as e:
         return _error_payload(
@@ -983,12 +1040,20 @@ def recall_agent_context(
     min_importance: Optional[float] = None,
     memory_type: Optional[str] = None,
     tags: Optional[list[str]] = None,
+    time_window: Optional[str] = None,
+    created_after_iso: Optional[str] = None,
+    created_before_iso: Optional[str] = None,
 ) -> dict[str, Any]:
     correlation_id = _new_correlation_id()
     service = _require_memory_service(correlation_id=correlation_id)
     if isinstance(service, dict):
         return service
     try:
+        normalized_after_iso, normalized_before_iso = _resolve_temporal_bounds(
+            time_window=time_window,
+            created_after_iso=created_after_iso,
+            created_before_iso=created_before_iso,
+        )
         return service.recall_agent_context(
             query=query,
             user_id=user_id,
@@ -998,6 +1063,8 @@ def recall_agent_context(
             min_importance=min_importance,
             memory_type=memory_type,
             tags=tags,
+            created_after_iso=normalized_after_iso,
+            created_before_iso=normalized_before_iso,
         )
     except Exception as e:
         return _error_payload(
@@ -1015,18 +1082,28 @@ def recall_user_preferences(
     k: int = 5,
     min_importance: Optional[float] = None,
     tags: Optional[list[str]] = None,
+    time_window: Optional[str] = None,
+    created_after_iso: Optional[str] = None,
+    created_before_iso: Optional[str] = None,
 ) -> dict[str, Any]:
     correlation_id = _new_correlation_id()
     service = _require_memory_service(correlation_id=correlation_id)
     if isinstance(service, dict):
         return service
     try:
+        normalized_after_iso, normalized_before_iso = _resolve_temporal_bounds(
+            time_window=time_window,
+            created_after_iso=created_after_iso,
+            created_before_iso=created_before_iso,
+        )
         return service.recall_user_preferences(
             query=query,
             user_id=user_id,
             k=k,
             min_importance=min_importance,
             tags=tags,
+            created_after_iso=normalized_after_iso,
+            created_before_iso=normalized_before_iso,
         )
     except Exception as e:
         return _error_payload(
@@ -1543,10 +1620,10 @@ def get_session_memories(
         return {
             "memories": [
                 {
-                    "id": m.id,
-                    "text": m.text,
-                    "type": m.type,
-                    "created_at": _iso_attr(m, "created_at", "createdat"),
+                    "id": m["memory_id"],
+                    "text": m["text"],
+                    "type": m.get("type"),
+                    "created_at": m.get("created_at"),
                 }
                 for m in memories
             ],
@@ -1589,10 +1666,10 @@ def get_agent_memories(
         return {
             "memories": [
                 {
-                    "id": m.id,
-                    "text": m.text,
-                    "type": m.type,
-                    "created_at": _iso_attr(m, "created_at", "createdat"),
+                    "id": m["memory_id"],
+                    "text": m["text"],
+                    "type": m.get("type"),
+                    "created_at": m.get("created_at"),
                 }
                 for m in memories
             ],
@@ -2195,27 +2272,27 @@ def get_recent_memories(
         List of memories from the specified time window
     """
     try:
-        normalized_window = time_window.upper().replace("-", "_")
-        time_range = getattr(TimeRange, normalized_window, TimeRange.LAST_DAY)
-        memories = memory_client.get_memories_by_time_range(
+        service = _require_memory_service()
+        if isinstance(service, dict):
+            return service
+        created_after_iso, _ = _resolve_temporal_bounds(time_window=time_window)
+        response = service.recall(
+            query="*",
             user_id=user_id,
-            time_range=time_range,
+            project_id=project,
+            k=100,
+            include_cross_scope=False,
+            created_after_iso=created_after_iso,
         )
-        
-        # Filter by project if provided
-        if project:
-            memories = [
-                m for m in memories
-                if f"project:{project}" in getattr(m, "tags", [])
-            ]
-        
+        memories = response.get("results", [])
+
         return {
             "memories": [
                 {
-                    "id": m.id,
-                    "text": m.text,
-                    "type": m.type,
-                    "created_at": _iso_attr(m, "created_at", "createdat"),
+                    "id": m["memory_id"],
+                    "text": m["text"],
+                    "type": m.get("type"),
+                    "created_at": m.get("created_at"),
                 }
                 for m in memories
             ],
