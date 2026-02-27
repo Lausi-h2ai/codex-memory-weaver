@@ -26,24 +26,50 @@ def _iso_attr(obj: Any, *names: str) -> str | None:
     return str(value)
 
 
+def _parse_iso8601(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        dt = value
+        parsed = value
     else:
-        text = str(value).strip()
-        if not text:
-            return None
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            dt = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+        parsed = _parse_iso8601(str(value).strip())
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _memory_created_at(memory: Any) -> datetime | None:
+    raw = _attr(memory, "created_at", "createdat")
+    return _parse_datetime(raw)
+
+
+def _within_time_bounds(memory: Any, created_after_iso: str | None, created_before_iso: str | None) -> bool:
+    if not created_after_iso and not created_before_iso:
+        return True
+    created_at = _memory_created_at(memory)
+    if created_at is None:
+        return False
+    lower = _parse_iso8601(created_after_iso)
+    upper = _parse_iso8601(created_before_iso)
+    if lower is not None and created_at < lower:
+        return False
+    if upper is not None and created_at > upper:
+        return False
+    return True
 
 
 def _recency_decay_factor(*, now: datetime, created_at: datetime | None, half_life_days: float) -> float:
@@ -202,6 +228,8 @@ class MemoryService:
         recency_half_life_days: float | None = None,
         recency_weight: float = 0.25,
         usage_weight: float = 0.35,
+        created_after_iso: str | None = None,
+        created_before_iso: str | None = None,
     ) -> dict[str, Any]:
         scope_value = self.access.enforce_recall_scope(
             scope=scope,
@@ -223,17 +251,23 @@ class MemoryService:
             agent_id=agent_id,
             project_id=project_id,
             scope=scope_value,
+            created_after_iso=created_after_iso,
+            created_before_iso=created_before_iso,
         )
+        filtered_results = [
+            r for r in results
+            if _within_time_bounds(r.memory, created_after_iso, created_before_iso)
+        ]
         now = datetime.now(timezone.utc)
         recency_enabled = recency_half_life_days is not None and recency_half_life_days > 0
         bounded_recency_weight = max(0.0, min(1.0, recency_weight))
         bounded_usage_weight = max(0.0, min(1.0, usage_weight))
 
         response_results: list[dict[str, Any]] = []
-        for r in results:
+        for r in filtered_results:
             memory = r.memory
             base_score = float(r.score)
-            created_dt = _parse_datetime(_attr(memory, "created_at", "createdat"))
+            created_dt = _memory_created_at(memory)
             recency_factor = (
                 _recency_decay_factor(
                     now=now,
@@ -281,7 +315,7 @@ class MemoryService:
 
         return {
             "query": query,
-            "count": len(results),
+            "count": len(filtered_results),
             "results": response_results,
         }
 

@@ -379,3 +379,19 @@ def test_graph_extras_methods_raise_not_supported_when_backend_missing() -> None
         pass
     else:
         raise AssertionError("expected NotImplementedError for extract_relationships")
+
+
+def test_recall_includes_temporal_filters() -> None:
+    client = DummyClient()
+    adapter = HippocampAIAdapter(client)
+
+    adapter.recall(
+        query="auth",
+        user_id="u1",
+        created_after_iso="2026-01-01T00:00:00+00:00",
+        created_before_iso="2026-02-01T00:00:00+00:00",
+    )
+
+    payload = client.calls["recall"]
+    assert payload["filters"]["created_after"] == "2026-01-01T00:00:00+00:00"
+    assert payload["filters"]["created_before"] == "2026-02-01T00:00:00+00:00"

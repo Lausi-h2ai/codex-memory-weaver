@@ -38,6 +38,8 @@ class MemoryStore(Protocol):
         agent_id: str | None = None,
         project_id: str | None = None,
         scope: MemoryScope | None = None,
+        created_after_iso: str | None = None,
+        created_before_iso: str | None = None,
     ) -> list[Any]: ...
 
     def update(
