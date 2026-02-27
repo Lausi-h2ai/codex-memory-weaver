@@ -7,6 +7,12 @@ from typing import Any
 from hippocampai_mcp.domain.models import MemoryScope
 
 
+class _RelationTypeCompat(str):
+    @property
+    def value(self) -> str:
+        return str(self)
+
+
 class HippocampAIAdapter:
     _relation_type_enum: Any | None = None
     _relation_type_enum_resolved: bool = False
@@ -41,12 +47,12 @@ class HippocampAIAdapter:
     def _coerce_relation_type(cls, relation_type: str) -> Any:
         relation_type_enum = cls._resolve_relation_type_enum()
         if relation_type_enum is None:
-            return relation_type
+            return _RelationTypeCompat(relation_type)
         try:
             return relation_type_enum(relation_type)
         except Exception:
             enum_member = getattr(relation_type_enum, relation_type.upper(), None)
-            return enum_member if enum_member is not None else relation_type
+            return enum_member if enum_member is not None else _RelationTypeCompat(relation_type)
 
     @classmethod
     def _coerce_relation_types(cls, relation_types: list[str] | None) -> list[Any] | None:

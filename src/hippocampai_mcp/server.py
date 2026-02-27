@@ -419,6 +419,9 @@ def recall(
     tags: Optional[list[str]] = None,
     agent_id: Optional[str] = None,
     project: Optional[str] = None,
+    recency_half_life_days: Optional[float] = None,
+    recency_weight: float = 0.25,
+    usage_weight: float = 0.35,
     time_window: Optional[str] = None,
     created_after_iso: Optional[str] = None,
     created_before_iso: Optional[str] = None,
@@ -439,6 +442,9 @@ def recall(
         tags: Filter by tags (AND logic)
         agent_id: Filter by agent
         project: Filter by project name
+        recency_half_life_days: Optional half-life for temporal decay. Disabled when omitted.
+        recency_weight: Blend amount of recency penalty in final score (0-1)
+        usage_weight: Boost weight applied from usage/feedback signal (0-1)
         time_window: Relative time window (LAST_HOUR/LAST_DAY/LAST_WEEK/LAST_MONTH/LAST_YEAR)
         created_after_iso: Lower bound created-at filter in ISO 8601
         created_before_iso: Upper bound created-at filter in ISO 8601
@@ -470,6 +476,9 @@ def recall(
             search_mode=search_mode,
             tags=tags,
             include_cross_scope=False,
+            recency_half_life_days=recency_half_life_days,
+            recency_weight=recency_weight,
+            usage_weight=usage_weight,
             created_after_iso=normalized_after_iso,
             created_before_iso=normalized_before_iso,
         )
