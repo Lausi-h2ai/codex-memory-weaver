@@ -13,8 +13,9 @@ Use this when your environment already has dependencies installed.
       "command": "python",
       "args": ["-m", "hippocampai_mcp.server"],
       "env": {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "qwen2.5:7b-instruct",
+        "LLM_PROVIDER": "ollama",
+        "LLM_BASE_URL": "http://localhost:11434",
+        "LLM_MODEL": "qwen2.5:7b-instruct",
         "QDRANT_URL": "http://localhost:6333",
         "REDIS_URL": "redis://localhost:6379"
       }
@@ -34,8 +35,9 @@ Use this when your workflow is centered on `uv`.
       "command": "uv",
       "args": ["run", "python", "-m", "hippocampai_mcp.server"],
       "env": {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "qwen2.5:7b-instruct",
+        "LLM_PROVIDER": "ollama",
+        "LLM_BASE_URL": "http://localhost:11434",
+        "LLM_MODEL": "qwen2.5:7b-instruct",
         "QDRANT_URL": "http://localhost:6333",
         "REDIS_URL": "redis://localhost:6379"
       }
@@ -55,8 +57,37 @@ Use this when the client does not activate your virtual environment.
       "command": "F:/hippocampai-mcp/venv/Scripts/python.exe",
       "args": ["-m", "hippocampai_mcp.server"],
       "env": {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "qwen2.5:7b-instruct",
+        "LLM_PROVIDER": "ollama",
+        "LLM_BASE_URL": "http://localhost:11434",
+        "LLM_MODEL": "qwen2.5:7b-instruct",
+        "QDRANT_URL": "http://localhost:6333",
+        "REDIS_URL": "redis://localhost:6379"
+      }
+    }
+  }
+}
+```
+
+## 4) llama.cpp (`llama-server`) with `-hf` model pull
+
+Use this when you run a local OpenAI-compatible `llama-server`, for example:
+
+```bash
+llama-server -hf ggml-org/gemma-3-1b-it-GGUF
+```
+
+Then point MCP to that server:
+
+```json
+{
+  "mcpServers": {
+    "hippocampai": {
+      "command": "python",
+      "args": ["-m", "hippocampai_mcp.server"],
+      "env": {
+        "LLM_PROVIDER": "openai",
+        "LLM_BASE_URL": "http://localhost:8080/v1",
+        "LLM_MODEL": "gemma-3-1b-it",
         "QDRANT_URL": "http://localhost:6333",
         "REDIS_URL": "redis://localhost:6379"
       }
@@ -67,7 +98,7 @@ Use this when the client does not activate your virtual environment.
 
 ## Naming conventions
 
-- `user_id`: stable developer or workspace identity (e.g. `laure`, `alice@company.com`).
+- `user_id`: stable developer or workspace identity (e.g. `dev-user`, `engineer@company.com`).
 - `project_id`: stable repository/workspace identifier (e.g. `hippocampai-mcp`).
 - `agent_id`: stable tool/agent identity (e.g. `codex-main`, `codex-debugger`).
 
