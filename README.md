@@ -460,4 +460,3 @@ Contributions welcome! Please submit issues and pull requests.
 
 - HippocampAI: https://github.com/rexdivakar/HippocampAI
 - MCP Protocol: https://modelcontextprotocol.io
-- Issues: https://github.com/your-repo/issues
